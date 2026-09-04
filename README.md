@@ -85,6 +85,28 @@ No Windows sem `make`: `./scripts/up.ps1`, `./scripts/down.ps1`, `./scripts/seed
 
 ---
 
+## Deploy no Render
+
+O repositório inclui um [`render.yaml`](render.yaml) (Blueprint) que sobe Postgres +
+backend + frontend de uma vez, usando os mesmos `Dockerfile`s do `docker compose`.
+
+1. No [dashboard do Render](https://dashboard.render.com), **New** → **Blueprint** →
+   conecte o repositório `cosilva-prime/products` (branch `main`).
+2. Confirme os 3 recursos detectados (`w2health-db`, `w2health-backend`,
+   `w2health-frontend`) e clique em **Apply**.
+3. O backend aplica as migrations e, no primeiro start, gera a massa sintética
+   sozinho (`AUTO_SEED=true` — sem precisar de Shell, pensado para o plano free).
+   Isso é idempotente: reinícios seguintes não recriam os dados.
+4. Acesse a URL pública do serviço `w2health-frontend`.
+
+No plano **free**: o Postgres expira em 30 dias (upgrade antes disso se quiser manter os
+dados) e os web services "dormem" após ~15 min sem tráfego — a primeira requisição depois
+disso demora mais para responder. Para desativar o auto-seed ou trocar a quantidade de
+beneficiários gerados, ajuste `AUTO_SEED`/`AUTO_SEED_BENEFICIARIOS` nas env vars do
+serviço `w2health-backend`.
+
+---
+
 ## Como executar migrations
 
 ```bash

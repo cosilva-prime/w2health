@@ -7,7 +7,7 @@ a integração com o PostgreSQL entra na Etapa 2 (modelo de dados + migrations).
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+psycopg://w2health:w2health@localhost:5432/w2health"
     )
+
+    @field_validator("database_url")
+    @classmethod
+    def _forcar_driver_psycopg(cls, v: str) -> str:
+        """Provedores como o Render entregam `postgresql://` ou `postgres://` (sem
+        driver). O projeto só empacota o `psycopg` (v3) — não o `psycopg2` — então
+        normalizamos o esquema aqui para não depender de cada ambiente configurar
+        `DATABASE_URL` com o sufixo `+psycopg` manualmente."""
+        for prefixo in ("postgresql://", "postgres://"):
+            if v.startswith(prefixo):
+                return "postgresql+psycopg://" + v[len(prefixo):]
+        return v
 
 
 @lru_cache

@@ -5,5 +5,10 @@ set -e
 echo "[start] aplicando migrations (alembic upgrade head)..."
 alembic upgrade head
 
+if [ "${AUTO_SEED:-false}" = "true" ]; then
+    echo "[start] AUTO_SEED=true — verificando se é preciso popular dados sintéticos..."
+    python -m app.seed.autoseed
+fi
+
 echo "[start] iniciando uvicorn..."
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000
