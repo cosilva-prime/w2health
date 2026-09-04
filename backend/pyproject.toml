@@ -1,0 +1,52 @@
+[project]
+name = "w2health-backend"
+version = "0.1.0"
+description = "W2Health Intelligence — backend (FastAPI). Ambiente demonstrativo com dados sintéticos."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.32,<0.33",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.5,<3",
+    "sqlalchemy>=2.0.36,<2.1",
+    "alembic>=1.14,<2",
+    "psycopg[binary]>=3.2,<4",
+    "numpy>=2.1,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "httpx>=0.27,<0.28",
+    "ruff>=0.7,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "scenarios: testes de integração que exigem PostgreSQL + massa sintética seedada",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Código numérico denso do gerador — linhas mais longas ajudam a legibilidade das matrizes.
+"app/seed/generator.py" = ["E501"]
+"app/seed/affinities.py" = ["E501", "E731"]
+"app/seed/catalogs.py" = ["E501"]
+"app/seed/scenarios.py" = ["E501"]
+"app/seed/aggregate.py" = ["E501"]
+"app/analytics/*" = ["E501"]
+"app/api/*" = ["E501"]
+
+[tool.uv]
+package = false

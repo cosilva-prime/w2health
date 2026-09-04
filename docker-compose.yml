@@ -1,0 +1,58 @@
+name: w2health
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-w2health}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-w2health}
+      POSTGRES_DB: ${POSTGRES_DB:-w2health}
+    ports:
+      # 15432 no host: esta máquina já tem PostgreSQL nativo em 5432 e 5433.
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-w2health} -d ${POSTGRES_DB:-w2health}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: ./backend
+    environment:
+      PROJECT_NAME: "W2Health Intelligence"
+      ENVIRONMENT: "docker"
+      API_V1_PREFIX: "/api"
+      # Coleção -> o pydantic-settings decodifica como JSON. Manter array JSON válido.
+      CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000"]}'
+      # Reservada para a Etapa 2 (ainda não utilizada).
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-w2health}:${POSTGRES_PASSWORD:-w2health}@postgres:5432/${POSTGRES_DB:-w2health}"
+    ports:
+      # 8010 no host: o Docker Desktop / wslrelay ocupam a 8000 nesta máquina.
+      - "${BACKEND_PORT:-8010}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: "http://localhost:${BACKEND_PORT:-8010}/api"
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1 (não "localhost": dentro do contêiner resolve para ::1/IPv6 e o
+      # servidor do Next escuta só em IPv4).
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+volumes:
+  pgdata:

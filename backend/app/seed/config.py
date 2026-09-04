@@ -1,0 +1,36 @@
+"""Parâmetros do gerador sintético."""
+
+from dataclasses import dataclass, field
+from datetime import date
+
+
+@dataclass(frozen=True)
+class SeedConfig:
+    """Configuração reprodutível da geração.
+
+    Defaults do MVP: 20.000 beneficiários, jan/2025 a dez/2026, seed 42.
+    Para gerar 100.000, basta `SeedConfig(n_beneficiarios=100_000)`.
+    """
+
+    seed: int = 42
+    n_beneficiarios: int = 20_000
+    inicio: date = date(2025, 1, 1)
+    fim: date = date(2026, 12, 1)
+    escala_eventos: float = 1.0
+    # Sinistralidade média-alvo do baseline (primeiros meses), usada para calibrar a receita.
+    sinistralidade_alvo: float = 0.75
+    aplicar_cenarios: bool = True
+
+    # Lote para inserts em massa.
+    chunk: int = field(default=10_000, compare=False)
+
+    def competencias(self) -> list[date]:
+        meses: list[date] = []
+        y, m = self.inicio.year, self.inicio.month
+        while (y, m) <= (self.fim.year, self.fim.month):
+            meses.append(date(y, m, 1))
+            m += 1
+            if m == 13:
+                m = 1
+                y += 1
+        return meses
