@@ -102,39 +102,68 @@ def indicador(session: Session, competencia: date, comparacao: str = "mes_anteri
     }
 
 
-def composicao(session: Session, competencia: date, comparacao: str = "mes_anterior") -> dict:
+def composicao(
+    session: Session, competencia: date, comparacao: str = "mes_anterior",
+    dimensao: str | None = None, chave: str | None = None, contrato_id: int | None = None,
+) -> dict:
     """Composição financeira da despesa: bruta → glosas → coparticipação → líquida, e a
-    decomposição da variação da sinistralidade LÍQUIDA em 4 efeitos (Etapa B da v1.1)."""
-    atu = repo.sinistralidade_mes(session, competencia)
-    if atu is None:
-        raise ValueError(f"Competência sem dados: {competencia}")
-    comp_ant = competencia_comparacao(competencia, comparacao)
-    ant = repo.sinistralidade_mes(session, comp_ant)
+    decomposição da variação da sinistralidade LÍQUIDA em 4 efeitos (Etapa B da v1.1).
 
-    def _bloco(r: dict) -> dict:
+    v1.2: aceita escopo de **dimensão/chave** ou de **contrato** — nesses casos não há
+    receita, então `sinistralidade_*` e `decomposicao` vêm `None` (só a composição da
+    despesa). `despesa` no escopo de dimensão = Σ valor_pago; a decomposição de 4 efeitos
+    da carteira permanece inalterada."""
+    comp_ant = competencia_comparacao(competencia, comparacao)
+    escopo = "carteira"
+
+    if contrato_id is not None:
+        escopo = "contrato"
+        atu = repo.contrato_competencia(session, contrato_id, competencia)
+        ant = repo.contrato_competencia(session, contrato_id, comp_ant)
+        com_receita = False
+    elif dimensao is not None and chave is not None:
+        escopo = f"{dimensao}={chave}"
+        atu = repo.dimensao_mes(session, competencia, dimensao).get(chave)
+        ant = repo.dimensao_mes(session, comp_ant, dimensao).get(chave)
+        com_receita = False
+    else:
+        atu = repo.sinistralidade_mes(session, competencia)
+        ant = repo.sinistralidade_mes(session, comp_ant)
+        com_receita = True
+
+    if atu is None:
+        raise ValueError("Sem dados para o escopo/competência informados")
+
+    def _bloco(r: dict | None) -> dict | None:
+        if r is None:
+            return None
+        rec = _f(r["receita"]) if com_receita else None
+        dl = _f(r["despesa_liquida"])
+        db = _f(r["despesa_bruta"])
         return {
-            "despesa_bruta": round(_f(r["despesa_bruta"]), 2),
+            "despesa_bruta": round(db, 2),
             "glosas": round(_f(r["glosas"]), 2),
             "coparticipacao": round(_f(r["coparticipacao"]), 2),
-            "despesa_liquida": round(_f(r["despesa_liquida"]), 2),
-            "receita": round(_f(r["receita"]), 2),
-            "sinistralidade_bruta": round(_f(r["sinistralidade_bruta"]), 2),
-            "sinistralidade_liquida": round(_f(r["sinistralidade_liquida"]), 2),
+            "despesa_liquida": round(dl, 2),
+            "receita": round(rec, 2) if rec is not None else None,
+            "sinistralidade_bruta": round(db / rec * 100, 2) if rec else None,
+            "sinistralidade_liquida": round(dl / rec * 100, 2) if rec else None,
         }
 
     dec = None
-    if ant:
+    if com_receita and ant:
         dec = f.decomposicao_financeira(
             _f(ant["despesa_bruta"]), _f(ant["glosas"]), _f(ant["coparticipacao"]), _f(ant["receita"]),
             _f(atu["despesa_bruta"]), _f(atu["glosas"]), _f(atu["coparticipacao"]), _f(atu["receita"]),
         ).as_dict()
 
-    return {
+    out = {
         "competencia": competencia.isoformat(),
         "comparacao": comparacao,
         "competencia_comparacao": comp_ant.isoformat(),
+        "escopo": escopo,
         "atual": _bloco(atu),
-        "comparacao_valores": _bloco(ant) if ant else None,
+        "comparacao_valores": _bloco(ant),
         "decomposicao": dec,
         "metodologia": (
             "despesa_liquida = despesa_bruta - glosas - coparticipacao; sinistralidade_x = "
@@ -143,6 +172,12 @@ def composicao(session: Session, competencia: date, comparacao: str = "mes_anter
             "efeito_coparticipacao = -ΔCopart/R0; efeito_receita = Dliq1/R1 - Dliq1/R0."
         ),
     }
+    if not com_receita:
+        out["aviso"] = (
+            "Escopo sem receita própria — apenas a composição da despesa "
+            "(bruta/glosas/coparticipação/líquida); sinistralidade e decomposição não se aplicam."
+        )
+    return out
 
 
 def executivo(session: Session, competencia: date, comparacao: str = "mes_anterior") -> dict:

@@ -101,3 +101,36 @@ def test_saida_da_carteira_e_fato(db):
             assert saida["evidencias"][0]["nivel_confianca"] == cohorts.ALTA
             return
     pytest.skip("nenhum fator com saída de carteira nesta amostra")
+
+
+# =====================================================================================
+# v1.2 — escopo de contrato nas coortes
+# =====================================================================================
+def test_coortes_com_escopo_de_contrato_reconciliam(db):
+    """A identidade exata (soma das coortes == Δdespesa) vale também dentro de um contrato."""
+    from app.repositories import analytics_repo as repo
+
+    comp = date(2026, 9, 1)
+    cid = repo.contratos_resumo_mes(db, comp)[0]["id_contrato"]
+    ex = decomposition.explicar(db, comp, "mes_anterior", "especialidade", contrato_id=cid, top=20)
+    verificados = 0
+    for fator in (ex["principais_fatores"] + ex["fatores_reducao"])[:5]:
+        r = cohorts.analisar_causas(db, "especialidade", fator["chave"], comp, "mes_anterior", cid)
+        assert r["contrato_id"] == cid
+        assert r["reconciliacao"]["ok"], r["reconciliacao"]
+        verificados += 1
+    assert verificados > 0
+
+
+def test_coorte_escopo_contrato_subconjunto_da_carteira(db):
+    """A despesa de um fator num contrato é <= a despesa do mesmo fator na carteira."""
+    from app.repositories import analytics_repo as repo
+
+    comp = date(2026, 9, 1)
+    cid = repo.contratos_resumo_mes(db, comp)[0]["id_contrato"]
+    ex_geral = decomposition.explicar(db, comp, "mes_anterior", "especialidade", top=30)
+    ex_ctr = decomposition.explicar(db, comp, "mes_anterior", "especialidade", contrato_id=cid, top=30)
+    geral = {f["chave"]: f["despesa_atual"] for f in ex_geral["principais_fatores"] + ex_geral["fatores_reducao"]}
+    for f in ex_ctr["principais_fatores"] + ex_ctr["fatores_reducao"]:
+        if f["chave"] in geral:
+            assert f["despesa_atual"] <= geral[f["chave"]] + 1.0

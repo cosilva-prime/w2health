@@ -164,3 +164,50 @@ def test_endpoint_alertas_avaliados(api):
         item = b["itens"][0]
         campos = {"regra_nome", "entidade", "valor_observado", "limite", "severidade", "deep_link"}
         assert campos <= set(item)
+
+
+# =====================================================================================
+# v1.2 — novos indicadores (C6)
+# =====================================================================================
+def test_catalogo_inclui_indicadores_v1_2():
+    assert indicadores.obter("contrato", "concentracao") is not None
+    assert indicadores.obter("contrato", "n_beneficiarios_alto_custo") is not None
+    assert indicadores.obter("beneficiario", "novo_caso_alto_custo") is not None
+    assert indicadores.obter("beneficiario", "recorrencia") is not None
+
+
+def test_regra_contrato_concentracao_dispara(db):
+    regra = RegraAlerta(
+        nome="Contrato concentrado", entidade="contrato", indicador="concentracao",
+        operador=">=", limite=50.0, severidade="atencao",
+    )
+    db.add(regra)
+    db.commit()
+    res = alerts.avaliar_regras(db, date(2026, 8, 1), "mes_anterior")
+    meus = [a for a in res if a.regra_id == regra.id]
+    assert meus, "esperava contratos com top5_share >= 50%"
+    a = meus[0]
+    assert a.deep_link["rota"].startswith("/contratos/")
+
+
+def test_regra_novo_caso_alto_custo_dispara(db, gabarito):
+    regra = RegraAlerta(
+        nome="Novo caso alto custo", entidade="beneficiario",
+        indicador="novo_caso_alto_custo", operador=">=", limite=1.0, severidade="atencao",
+    )
+    db.add(regra)
+    db.commit()
+    comp = date.fromisoformat(str(gabarito["s16_contrato_novo_alto_custo"]["competencia_alvo"]))
+    res = alerts.avaliar_regras(db, comp, "mes_anterior")
+    assert [a for a in res if a.regra_id == regra.id], "cenário S16 deveria produzir um novo caso"
+
+
+def test_regra_recorrencia_calibrada_nao_e_fake(db):
+    regra = RegraAlerta(
+        nome="Recorrência alta", entidade="beneficiario", indicador="recorrencia",
+        operador=">=", limite=99.0, severidade="informativo",   # impossível
+    )
+    db.add(regra)
+    db.commit()
+    res = alerts.avaliar_regras(db, date(2026, 10, 1), "mes_anterior")
+    assert not [a for a in res if a.regra_id == regra.id]

@@ -4,7 +4,8 @@ import { useParams } from "next/navigation";
 
 import { MiniSeries } from "@/components/charts";
 import { Card, DataState, Stat } from "@/components/ui";
-import { fmtBRL, fmtBRLCompact, fmtNum } from "@/lib/format";
+import { filtersQuery, useFilters } from "@/lib/filters";
+import { fmtBRL, fmtBRLCompact, fmtNum, fmtPct } from "@/lib/format";
 import { useApi } from "@/lib/useApi";
 
 interface Detalhe {
@@ -14,6 +15,12 @@ interface Detalhe {
   };
   resumo: { despesa_total: number; eventos: number; meses_com_evento: number; custo_medio_evento: number };
   evolucao_mensal: { competencia: string; despesa: number; eventos: number }[];
+  comportamento: {
+    competencia_referencia: string;
+    recorrencia: { meses_com_evento: number; janela_meses: number; classificacao: string };
+    participacao_variacao: { participacao_pct: number; delta_beneficiario: number };
+    eventos_pontuais_alto_custo: { competencia: string; procedimento: string; despesa_liquida: number }[];
+  } | null;
   eventos: {
     id: number; data: string; competencia: string; tipo_atendimento: string; procedimento: string;
     especialidade: string; prestador: string; diagnostico: string | null; valor_pago: number;
@@ -33,9 +40,16 @@ const ETAPA_COR: Record<string, string> = {
   Internação: "bg-rose-100 text-rose-800",
 };
 
+const LABEL_RECORRENCIA: Record<string, string> = {
+  esporadico: "Esporádico",
+  recorrente: "Recorrente",
+  utilizador_frequente: "Utilizador frequente",
+};
+
 export default function BeneficiarioDetalhePage() {
   const { id } = useParams<{ id: string }>();
-  const d = useApi<Detalhe>(`/analytics/beneficiarios/${id}`);
+  const f = useFilters();
+  const d = useApi<Detalhe>(`/analytics/beneficiarios/${id}${f.competencia ? `?competencia=${f.competencia}` : ""}`);
   const tl = useApi<Timeline>(`/analytics/beneficiarios/${id}/timeline`);
 
   return (
@@ -61,6 +75,31 @@ export default function BeneficiarioDetalhePage() {
           <Card title="Evolução mensal de custo">
             <MiniSeries serie={d.data.evolucao_mensal} dataKey="despesa" />
           </Card>
+
+          {d.data.comportamento && (
+            <Card title="Comportamento (v1.2)">
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                  {LABEL_RECORRENCIA[d.data.comportamento.recorrencia.classificacao] ??
+                    d.data.comportamento.recorrencia.classificacao}{" "}
+                  · {d.data.comportamento.recorrencia.meses_com_evento}/
+                  {d.data.comportamento.recorrencia.janela_meses} meses com evento
+                </span>
+                <span className="rounded-full bg-brand-50 px-2 py-1 text-brand-700">
+                  {fmtPct(d.data.comportamento.participacao_variacao.participacao_pct)} da variação da carteira
+                </span>
+                {d.data.comportamento.eventos_pontuais_alto_custo.length > 0 && (
+                  <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-800">
+                    {d.data.comportamento.eventos_pontuais_alto_custo.length} evento(s) pontual(is) de alto custo
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-[11px] text-slate-400">
+                Descritores observados (nunca previsão nem score clínico) — referência{" "}
+                {d.data.comportamento.competencia_referencia}.
+              </p>
+            </Card>
+          )}
 
           <Card title="Timeline assistencial simplificada">
             <DataState isLoading={tl.isLoading && !tl.data} error={tl.error}>

@@ -97,12 +97,13 @@ def _participacao(delta: float, denom_total: float, soma_abs: float) -> float:
 
 
 def analisar_causas(
-    session: Session, dimensao: str, chave: str, competencia: date, comparacao: str = "mes_anterior"
+    session: Session, dimensao: str, chave: str, competencia: date,
+    comparacao: str = "mes_anterior", contrato_id: int | None = None,
 ) -> dict:
     comp_ant = competencia_comparacao(competencia, comparacao)
 
-    pop0 = repo.beneficiarios_da_categoria(session, comp_ant, dimensao, chave)
-    pop1 = repo.beneficiarios_da_categoria(session, competencia, dimensao, chave)
+    pop0 = repo.beneficiarios_da_categoria(session, comp_ant, dimensao, chave, contrato_id)
+    pop1 = repo.beneficiarios_da_categoria(session, competencia, dimensao, chave, contrato_id)
     b0, b1 = set(pop0), set(pop1)
 
     novos_ids = sorted(b1 - b0)
@@ -161,8 +162,8 @@ def analisar_causas(
         p1 = d1_rec / n1_rec if n1_rec else 0.0
         bridge = f.bennet_bridge(n0_rec, p0, n1_rec, p1).as_dict()
 
-        prest_ant = repo.prestadores_por_beneficiario_na_categoria(session, comp_ant, dimensao, chave, recorrentes_ids)
-        prest_atu = repo.prestadores_por_beneficiario_na_categoria(session, competencia, dimensao, chave, recorrentes_ids)
+        prest_ant = repo.prestadores_por_beneficiario_na_categoria(session, comp_ant, dimensao, chave, recorrentes_ids, contrato_id)
+        prest_atu = repo.prestadores_por_beneficiario_na_categoria(session, competencia, dimensao, chave, recorrentes_ids, contrato_id)
         trocaram = [i for i in recorrentes_ids if prest_ant.get(i) and prest_atu.get(i) and not (prest_ant[i] & prest_atu[i])]
 
         evidencias = [
@@ -235,7 +236,7 @@ def analisar_causas(
         if permanece_sem_evento:
             d_sub = sum(pop0[i]["despesa"] for i in permanece_sem_evento)
             deltas_brutos["permaneceram_sem_evento"] = -d_sub
-            perfil = repo.perfil_utilizacao_despesa(session, comp_ant, dimensao, chave, permanece_sem_evento)
+            perfil = repo.perfil_utilizacao_despesa(session, comp_ant, dimensao, chave, permanece_sem_evento, contrato_id)
             total_perfil = sum(perfil.values()) or 1.0
             share_pontual = perfil.get("pontual", 0.0) / total_perfil
 
@@ -291,6 +292,7 @@ def analisar_causas(
         "competencia_comparacao": comp_ant.isoformat(),
         "dimensao": dimensao,
         "chave": chave,
+        "contrato_id": contrato_id,
         "despesa_anterior": round(despesa_ant_total, 2),
         "despesa_atual": round(despesa_atu_total, 2),
         "delta_total": round(delta_total, 2),

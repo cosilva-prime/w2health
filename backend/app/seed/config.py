@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from datetime import date
 
+from app.core.tenant import DEFAULT_TENANT
+
 
 @dataclass(frozen=True)
 class SeedConfig:
@@ -14,6 +16,9 @@ class SeedConfig:
 
     seed: int = 42
     n_beneficiarios: int = 20_000
+    # Tenant a que a massa sintética pertence (v1.2). Toda linha gerada é carimbada com
+    # este valor; as `agg_*` também. Um segundo tenant sintético usaria outro valor aqui.
+    tenant_id: str = DEFAULT_TENANT
     inicio: date = date(2025, 1, 1)
     fim: date = date(2026, 12, 1)
     escala_eventos: float = 1.0

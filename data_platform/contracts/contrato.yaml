@@ -1,0 +1,97 @@
+entity: contrato
+version: 1
+grain: "1 linha por contrato (apólice coletiva, adesão ou vínculo individual) da operadora"
+primary_key: [tenant_id, id_contrato]
+business_keys:
+  - [tenant_id, codigo]
+load_strategy: UPSERT
+watermark_column: source_updated_at
+updated_at_column: source_updated_at
+deduplication_strategy: "business_key"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: id_contrato
+    type: bigint
+    nullable: false
+    required_for: [contract]
+    classification: internal
+    description: "Surrogate key."
+    example: 45
+    typical_source: "gerado"
+    transformation: "surrogate"
+    quality_rules: []
+  - name: codigo
+    type: string
+    nullable: false
+    required_for: [contract]
+    classification: operational
+    description: "Número/identificador do contrato na operadora. Único por tenant."
+    example: "CT-2019-0456"
+    typical_source: "cadastro comercial / contratos"
+    transformation: "-"
+    quality_rules: []
+  - name: id_plano
+    type: bigint
+    nullable: false
+    required_for: [contract]
+    classification: internal
+    description: "Plano ao qual o contrato pertence. Um plano tem N contratos."
+    example: 12
+    typical_source: "cadastro comercial"
+    transformation: "lookup plano.codigo -> id_plano"
+    quality_rules: []
+  - name: nome
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "Nome/razão social do contratante (mascarado se PF)."
+    example: "Indústria Metalúrgica XYZ"
+    typical_source: "cadastro comercial"
+    transformation: "mascarar quando pessoa física"
+    quality_rules: []
+  - name: tipo
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "PF | PME | Empresarial (afeta regra de reajuste — fora do escopo v1.2)."
+    example: "Empresarial"
+    typical_source: "cadastro comercial"
+    transformation: "normalizar"
+    quality_rules: []
+  - name: data_base
+    type: date
+    nullable: true
+    required_for: [reajuste]
+    classification: operational
+    description: "Mês de aniversário do contrato (data-base do reajuste). RECOMENDADO. Não usado na v1.2."
+    example: "2019-05-01"
+    typical_source: "contratos"
+    transformation: "-"
+    quality_rules: []
+  - name: meta_sinistralidade
+    type: numeric
+    nullable: true
+    required_for: [reajuste]
+    classification: operational
+    description: "Meta de sinistralidade do contrato (%). OPCIONAL — pré-requisito de reajuste, não usado na v1.2."
+    example: 72.0
+    typical_source: "atuária / comercial"
+    transformation: "-"
+    quality_rules: []
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]
+notes: >
+  No modelo sintético do W2Health, contrato tem `vidas_alvo` (só orienta a geração). Num
+  cliente real esse campo não existe. `data_base` / `meta_sinistralidade` são o começo do
+  layout de reajuste — mantidos aqui como contrato, sem lógica associada na v1.2.

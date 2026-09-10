@@ -1,4 +1,9 @@
-"""Carteira e receita: competências, beneficiários, receitas de contraprestação."""
+"""Carteira e receita: competências, beneficiários, receitas de contraprestação.
+
+`Competencia` é um **calendário global** (não pertence a um cliente) — único modelo
+persistido sem `tenant_id`. `Beneficiario` e `Receita` são tenant-aware; as chaves de
+negócio passam a ser `(tenant_id, codigo)` e `(tenant_id, competencia, id_plano)`.
+"""
 
 from datetime import date
 from decimal import Decimal
@@ -7,6 +12,7 @@ from sqlalchemy import Boolean, Date, ForeignKey, Integer, Numeric, String, Uniq
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models._mixins import TenantMixin
 from app.models.catalog import Contrato, Plano, Regiao
 
 
@@ -21,11 +27,14 @@ class Competencia(Base):
     is_inverno: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
-class Beneficiario(Base):
+class Beneficiario(TenantMixin, Base):
     __tablename__ = "beneficiarios"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "codigo", name="uq_beneficiarios_tenant_codigo"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    codigo: Mapped[str] = mapped_column(String(16), unique=True, index=True)  # BEN-000001
+    codigo: Mapped[str] = mapped_column(String(16), index=True)  # BEN-000001 (único por tenant)
     sexo: Mapped[str] = mapped_column(String(1))  # M | F
     data_nascimento: Mapped[date] = mapped_column(Date)
     faixa_etaria: Mapped[str] = mapped_column(String(10), index=True)
@@ -41,9 +50,13 @@ class Beneficiario(Base):
     contrato: Mapped[Contrato] = relationship()
 
 
-class Receita(Base):
+class Receita(TenantMixin, Base):
     __tablename__ = "receitas"
-    __table_args__ = (UniqueConstraint("competencia", "id_plano", name="uq_receita_comp_plano"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "competencia", "id_plano", name="uq_receitas_tenant_comp_plano"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     competencia: Mapped[date] = mapped_column(Date, index=True)

@@ -14,7 +14,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.models import RegraAlerta, SeedManifest
+from app.models import RegraAlerta, SeedManifest, Tenant
 from app.seed.aggregate import rebuild_aggregations
 from app.seed.config import SeedConfig
 from app.seed.generator import (
@@ -36,6 +36,11 @@ def run_seed(cfg: SeedConfig, session: Session, *, verbose: bool = True) -> dict
 
     log("limpando dados...")
     wipe_dados(session)
+
+    # tenant do ambiente (v1.2) — upsert idempotente
+    if session.get(Tenant, cfg.tenant_id) is None:
+        session.add(Tenant(id=cfg.tenant_id, nome="W2Health Demo", status="ativo"))
+        session.flush()
 
     log("catálogos...")
     cat = load_catalogos(session, cfg, rng)
@@ -75,16 +80,19 @@ def run_seed(cfg: SeedConfig, session: Session, *, verbose: bool = True) -> dict
     )
 
     if gabarito_rows:
+        for g in gabarito_rows:
+            g.tenant_id = cfg.tenant_id
         session.add_all(gabarito_rows)
         session.flush()
 
     log("reconstruindo camada analítica...")
-    counts = rebuild_aggregations(session)
+    counts = rebuild_aggregations(session, tenant_id=cfg.tenant_id)
     log(f"  {counts}")
 
-    _seed_regras_alerta_default(session)
+    _seed_regras_alerta_default(session, cfg.tenant_id)
 
     manifest = SeedManifest(
+        tenant_id=cfg.tenant_id,
         seed=cfg.seed,
         beneficiarios=cfg.n_beneficiarios,
         inicio=cfg.inicio,
@@ -104,14 +112,15 @@ def run_seed(cfg: SeedConfig, session: Session, *, verbose: bool = True) -> dict
     return manifest.contagens
 
 
-def _seed_regras_alerta_default(session: Session) -> None:
-    """Regras de exemplo (v1.1, Etapa C) — inseridas só se a tabela estiver vazia, para
-    NUNCA apagar configuração que o gestor já tenha criado/editado num reseed."""
+def _seed_regras_alerta_default(session: Session, tenant_id: str) -> None:
+    """Regras de exemplo (v1.1 Etapa C + v1.2 C6) — inseridas só se a tabela estiver vazia,
+    para NUNCA apagar configuração que o gestor já tenha criado/editado num reseed."""
     if session.query(RegraAlerta).count() > 0:
         return
     session.add_all(
         [
             RegraAlerta(
+                tenant_id=tenant_id,
                 nome="Beneficiário de alto impacto", entidade="beneficiario",
                 indicador="participacao_variacao", operador=">=", limite=50.0,
                 severidade="critica",
@@ -119,13 +128,27 @@ def _seed_regras_alerta_default(session: Session) -> None:
                                  "para um valor menor (ver regra calibrada abaixo)"},
             ),
             RegraAlerta(
+                tenant_id=tenant_id,
                 nome="Beneficiário de alto impacto (calibrado para esta carteira)",
                 entidade="beneficiario", indicador="participacao_variacao",
                 operador=">=", limite=0.35, severidade="critica",
             ),
             RegraAlerta(
+                tenant_id=tenant_id,
                 nome="Prestador com crescimento relevante", entidade="prestador",
                 indicador="crescimento_despesa", operador=">=", limite=30.0,
+                severidade="atencao",
+            ),
+            # v1.2 — C6
+            RegraAlerta(
+                tenant_id=tenant_id,
+                nome="Contrato com concentração alta", entidade="contrato",
+                indicador="concentracao", operador=">=", limite=55.0, severidade="atencao",
+            ),
+            RegraAlerta(
+                tenant_id=tenant_id,
+                nome="Novo caso de alto custo no mês", entidade="beneficiario",
+                indicador="novo_caso_alto_custo", operador=">=", limite=1.0,
                 severidade="atencao",
             ),
         ]

@@ -2,6 +2,23 @@
 
 Fonte de verdade: `backend/app/models/`. Migrations: `backend/alembic/versions/`.
 
+> **v1.2** ([V1.2.md](V1.2.md)):
+> - **`tenant_id`** (`String(40)`, NOT NULL, indexado — mixin `app/models/_mixins.py`) em
+>   **todas** as tabelas persistidas, exceto `competencias` (calendário global) e `tenants`.
+>   Chaves de negócio → `(tenant_id, natural)`: `beneficiarios (tenant_id, codigo)`,
+>   `planos/especialidades/procedimentos (tenant_id, codigo)`, `diagnosticos (tenant_id, cid)`,
+>   `receitas (tenant_id, competencia, id_plano)`, `cenarios_gabarito (tenant_id, codigo)`,
+>   `uq_agg*`. `agg_sinistralidade_competencia` tem PK `(tenant_id, competencia)`.
+> - `contratos.vidas_alvo` (int) — só orienta a massa sintética (48 contratos).
+> - `agg_competencia_dimensao` / `agg_prestador_competencia` / `agg_beneficiario_competencia`:
+>   `+ despesa_bruta, glosas, coparticipacao, despesa_liquida` (aditivo à `despesa`).
+>   `agg_beneficiario_competencia + id_contrato`.
+> - **`agg_contrato_competencia`** (nova) — ver §Camada analítica.
+> - `app/models/platform.py`: `tenants`, `source_connections`, `source_entities`,
+>   `ingestion_runs`, `pipeline_runs`, `data_quality_results`, `receitas_contrato`
+>   (**layout preparado — não populado nem lido**). Todas tenant-aware. Ver
+>   [CANONICAL_DATA_MODEL.md](CANONICAL_DATA_MODEL.md) e `data_platform/contracts/`.
+
 ## Camada fonte (OLTP-like)
 
 ### `regioes`
@@ -96,8 +113,16 @@ glosa/coparticipação só é decomposto no nível executivo (`agg_sinistralidad
 `despesa`, `eventos`, `beneficiarios`, `custo_medio`, `participacao` (fração da despesa do
 mês), `procedimento_top_id`, `procedimento_top_share`
 
-### `agg_beneficiario_competencia`  — único (`competencia`, `id_beneficiario`)
-`despesa`, `eventos`
+### `agg_beneficiario_competencia`  — único (`tenant_id`, `competencia`, `id_beneficiario`)
+`despesa` (Σ valor_pago), `despesa_bruta`, `glosas`, `coparticipacao`, `despesa_liquida`
+(v1.2), `id_contrato` (v1.2), `eventos`
+
+### `agg_contrato_competencia`  (v1.2) — único (`tenant_id`, `competencia`, `id_contrato`)
+`vidas` (beneficiários ativos no mês), `despesa` (Σ valor_pago), `despesa_bruta`, `glosas`,
+`coparticipacao`, `despesa_liquida`, `eventos`, `beneficiarios_com_evento`, `custo_pmpm`
+(= despesa_liquida/vidas), `gini` e `top5_share` (sobre despesa líquida por beneficiário
+do contrato), `n_beneficiarios_alto_custo` (despesa líquida no mês ≥ `ALTO_CUSTO_MES`,
+`app/core/thresholds.py`). **Sem receita/sinistralidade próprias.**
 
 ### `cenarios_gabarito`
 `id`, `codigo` (único, ex. `s1_catarata_freq`), `nome`, `competencia_alvo`, `dimensao`,

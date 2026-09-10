@@ -1,5 +1,19 @@
 # Arquitetura — W2Health Intelligence
 
+> **v1.2**: introduzida a separação conceitual **Data Platform × Application Platform** e a
+> fundação multi-tenant. Ver [DATA_PLATFORM_ARCHITECTURE.md](DATA_PLATFORM_ARCHITECTURE.md),
+> [MULTI_TENANCY.md](MULTI_TENANCY.md) e [V1.2.md](V1.2.md). O documento abaixo descreve a
+> **Application Platform** (o que roda hoje).
+>
+> - Toda tabela persistida tem `tenant_id` (mixin `app/models/_mixins.py`), exceto
+>   `competencias` e o cadastro `tenants`. Chaves de negócio = `(tenant_id, natural)`.
+>   As consultas de leitura da API **ainda não filtram** por tenant (dívida — Fase 2: RLS).
+> - Nova tabela analítica **`agg_contrato_competencia`** (Contract Intelligence).
+> - `app/models/platform.py`: cadastro de tenants + tabelas de controle de ingestão
+>   (estrutura, não uso).
+> - `data_platform/` (raiz do repo): contratos canônicos, mappings, SQL de referência,
+>   regras de qualidade.
+
 Monolito modular. Sem microserviços. Três serviços no Compose + um comando de seed.
 
 ```
@@ -59,7 +73,15 @@ varrida em requests**, exceto no detalhe de 1 beneficiário (indexado). O seed m
 | `agg_sinistralidade_competencia` | competência | indicador, série, decomposição num/den |
 | `agg_competencia_dimensao` | competência × dimensão × chave | `explicar` / `drill`, procedimentos |
 | `agg_prestador_competencia` | competência × prestador | ranking, lista, detalhe, pares |
-| `agg_beneficiario_competencia` | competência × beneficiário | concentração, lista de beneficiários |
+| `agg_beneficiario_competencia` | competência × beneficiário | concentração, lista de beneficiários, concentração da variação (C1) |
+| `agg_contrato_competencia` (v1.2) | competência × contrato | Contract Intelligence: vidas, despesa bruta/glosa/copart/líquida, Gini, top-5 share, nº alto custo |
+
+**v1.2 — composição financeira propagada**: `agg_competencia_dimensao`,
+`agg_prestador_competencia` e `agg_beneficiario_competencia` ganharam
+`despesa_bruta/glosas/coparticipacao/despesa_liquida` (aditivo à `despesa` = Σ valor_pago).
+`rebuild_aggregations(session, tenant_id)` é **tenant-scoped**. O **escopo de contrato**
+em `explicar/drill/causas` NÃO usa `agg_*` — calcula de `eventos_assistenciais` sob demanda
+(join `beneficiarios.id_contrato`).
 
 Reconstruídas por `app/seed/aggregate.py` (roda inteiramente no PostgreSQL) ao final do
 seed e via `python -m app.seed.aggregate` / `make rebuild-agg`.

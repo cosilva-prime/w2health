@@ -1,0 +1,83 @@
+entity: plano
+version: 1
+grain: "1 linha por produto/plano de saúde da operadora"
+primary_key: [tenant_id, id_plano]
+business_keys:
+  - [tenant_id, codigo]
+load_strategy: UPSERT
+watermark_column: source_updated_at
+updated_at_column: source_updated_at
+deduplication_strategy: "business_key"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: id_plano
+    type: bigint
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Surrogate key."
+    example: 12
+    typical_source: "gerado"
+    transformation: "surrogate"
+    quality_rules: []
+  - name: codigo
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "Código do produto na operadora / registro ANS. Único por tenant."
+    example: "COMP-A-EMP"
+    typical_source: "cadastro de produtos"
+    transformation: "-"
+    quality_rules: []
+  - name: nome
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "Nome comercial do plano."
+    example: "Completo Apartamento Empresarial"
+    typical_source: "cadastro de produtos"
+    transformation: "-"
+    quality_rules: []
+  - name: segmentacao
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "ambulatorial | hospitalar | completo (segmentação assistencial ANS)."
+    example: "completo"
+    typical_source: "cadastro / registro ANS"
+    transformation: "normalizar"
+    quality_rules: []
+  - name: tem_coparticipacao
+    type: bool
+    nullable: false
+    required_for: [explicacao_coparticipacao]
+    classification: operational
+    description: "Se o plano cobra coparticipação."
+    example: true
+    typical_source: "cadastro de produtos / nota técnica"
+    transformation: "-"
+    quality_rules: []
+  - name: percentual_coparticipacao
+    type: numeric
+    nullable: true
+    required_for: [explicacao_coparticipacao]
+    classification: operational
+    description: "Fração (0-1) cobrada do beneficiário sobre eventos elegíveis, quando não vier por evento."
+    example: 0.30
+    typical_source: "cadastro de produtos"
+    transformation: "-"
+    quality_rules: []
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]

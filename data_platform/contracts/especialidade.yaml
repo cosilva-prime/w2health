@@ -1,0 +1,63 @@
+entity: especialidade
+version: 1
+grain: "1 linha por especialidade médica"
+primary_key: [tenant_id, id_especialidade]
+business_keys:
+  - [tenant_id, codigo]
+load_strategy: FULL
+watermark_column: null
+updated_at_column: null
+deduplication_strategy: "business_key"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: id_especialidade
+    type: bigint
+    nullable: false
+    required_for: [loss_ratio]
+    classification: internal
+    description: "Surrogate key."
+    example: 8
+    typical_source: "gerado"
+    transformation: "surrogate"
+    quality_rules: []
+  - name: codigo
+    type: string
+    nullable: false
+    required_for: [loss_ratio]
+    classification: operational
+    description: "Código da especialidade (CBO ou tabela própria). Único por tenant."
+    example: "CARDIOLOGIA"
+    typical_source: "cadastro / tabela CBHPM"
+    transformation: "-"
+    quality_rules: []
+  - name: nome
+    type: string
+    nullable: false
+    required_for: [loss_ratio]
+    classification: operational
+    description: "Nome da especialidade."
+    example: "Cardiologia"
+    typical_source: "cadastro"
+    transformation: "-"
+    quality_rules: []
+  - name: grupo
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "clinica | cirurgica | diagnostico | terapia (agrupador de análise)."
+    example: "clinica"
+    typical_source: "classificação própria"
+    transformation: "mapear"
+    quality_rules: []
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]

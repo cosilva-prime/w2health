@@ -201,3 +201,25 @@ def test_bridge_dispatch():
     assert f.bridge(1, 2, 3, 4, "bennet").metodo == "bennet"
     assert f.bridge(1, 2, 3, 4, "laspeyres").metodo == "laspeyres"
     assert not math.isnan(f.bridge(0, 0, 0, 0).delta_total)
+
+
+# ------------------------------------------------- v1.2 — concentração da variação (C1)
+def test_concentracao_da_variacao_top_k_e_gini():
+    # 3 grandes + muitos pequenos -> alto top-k share, alto Gini
+    valores = [500.0, 400.0, 300.0] + [5.0] * 40
+    c = f.concentracao(valores, ks=(3, 5, 10))
+    assert c.top_k_share[3] >= 0.85
+    assert c.gini >= 0.6
+    # distribuído -> baixo Gini
+    d = f.concentracao([10.0] * 50, ks=(3, 5))
+    assert d.gini < 0.05
+    assert d.top_k_share[5] == pytest.approx(0.1, abs=1e-6)
+
+
+def test_participacao_com_protecao_contra_cancelamento():
+    # muito cancelamento: líquido pequeno vs Σ|Δ| grande -> usa Σ|Δ| como denominador
+    anterior = {"a": ("A", 100.0), "b": ("B", 100.0)}
+    atual = {"a": ("A", 200.0), "b": ("B", 10.0)}   # Δ = +100 e -90, líquido +10
+    contribs = {c.chave: c.participacao_pct for c in f.contribuicoes(anterior, atual)}
+    # |part| de cada um fica "sensato" (< 100), não explode
+    assert abs(contribs["a"]) <= 100.0 and abs(contribs["b"]) <= 100.0

@@ -188,6 +188,46 @@ def _contrato_quantidade_vidas(session, competencia, comparacao, escopo):
     return [{"entidade_id": i, "rotulo": v["rotulo"], "valor": float(v["vidas"])} for i, v in vidas.items()]
 
 
+def _contrato_concentracao(session, competencia, comparacao, escopo):
+    # v1.2 — participação dos 5 maiores beneficiários na despesa líquida do contrato (%)
+    rows = repo.contratos_resumo_mes(session, competencia)
+    return [
+        {"entidade_id": r["id_contrato"], "rotulo": r["nome"],
+         "valor": float(r["top5_share"] or 0.0) * 100.0}
+        for r in rows
+    ]
+
+
+def _contrato_n_alto_custo(session, competencia, comparacao, escopo):
+    rows = repo.contratos_resumo_mes(session, competencia)
+    return [
+        {"entidade_id": r["id_contrato"], "rotulo": r["nome"],
+         "valor": float(r["n_beneficiarios_alto_custo"] or 0)}
+        for r in rows
+    ]
+
+
+# -------------------------------------------------------------- BENEFICIÁRIO (v1.2 — C5/C6)
+def _ben_novo_caso_alto_custo(session, competencia, comparacao, escopo):
+    from app.analytics import beneficiaries
+
+    res = beneficiaries.novos_casos_alto_custo(session, competencia, comparacao)
+    return [
+        {"entidade_id": it["id"], "rotulo": it["codigo"], "valor": 1.0}
+        for it in res["itens"]
+    ]
+
+
+def _ben_recorrencia(session, competencia, comparacao, escopo):
+    from app.analytics.beneficiaries import JANELA_RECORRENCIA
+
+    rows = repo.recorrencia_beneficiarios_mes(session, competencia, JANELA_RECORRENCIA)
+    return [
+        {"entidade_id": r["id"], "rotulo": r["codigo"], "valor": float(r["meses_com_evento"])}
+        for r in rows
+    ]
+
+
 # ------------------------------------------------------------------------------ FINANCEIRO
 def _fin_variacao(campo_atual: str, campo_ref_pct: bool = False) -> Funcao:
     def f(session, competencia, comparacao, escopo):
@@ -255,6 +295,20 @@ _reg("participacao_variacao", "contrato", "Participação na variação", "%",
      _contrato_participacao_variacao)
 _reg("quantidade_vidas", "contrato", "Quantidade de vidas", "un", "Beneficiários ativos no contrato.",
      _contrato_quantidade_vidas)
+_reg("concentracao", "contrato", "Concentração (5 maiores beneficiários)", "%",
+     "Participação dos 5 maiores beneficiários na despesa líquida do contrato no mês.",
+     _contrato_concentracao)
+_reg("n_beneficiarios_alto_custo", "contrato", "Nº de beneficiários de alto custo", "un",
+     "Beneficiários do contrato com despesa líquida acima do limiar mensal.",
+     _contrato_n_alto_custo)
+
+_reg("novo_caso_alto_custo", "beneficiario", "Novo caso de alto custo", "un",
+     "1 quando o beneficiário cruza o limiar de despesa líquida no mês sem histórico "
+     "relevante nos meses anteriores (descritivo — não é previsão).",
+     _ben_novo_caso_alto_custo)
+_reg("recorrencia", "beneficiario", "Recorrência (meses com evento)", "un",
+     "Nº de meses com evento na janela recente — descritor de utilização recorrente.",
+     _ben_recorrencia)
 
 _reg("variacao_glosa_pct", "financeiro", "Variação da glosa", "%",
      "Variação % da glosa total do período.", _fin_variacao("glosas", campo_ref_pct=True))

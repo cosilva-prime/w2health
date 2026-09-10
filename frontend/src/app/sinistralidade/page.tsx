@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { CausasPanel } from "@/components/CausasPanel";
 import { CompositionCard } from "@/components/CompositionCard";
+import { ConcentracaoBeneficiariosCard } from "@/components/ConcentracaoBeneficiariosCard";
 import { MiniSeries, WaterfallChart } from "@/components/charts";
 import { Card, DataState, EfeitoBadge, Stat } from "@/components/ui";
 import type { Bridge, Fator } from "@/lib/api";
@@ -56,16 +57,42 @@ export default function SinistralidadePage() {
   };
 
   const ready = f.competencia != null;
-  const ind = useApi<Indicador>(ready ? `/analytics/sinistralidade${filtersQuery(f)}` : null);
-  const exp = useApi<Explain>(ready ? `/analytics/sinistralidade/explain${filtersQuery(f, { dimensao })}` : null);
+  const emContrato = f.contratoId != null;
+  const catContratos = useApi<{ itens: { id: number; nome: string }[] }>("/catalogos/contratos");
+  const ind = useApi<Indicador>(ready && !emContrato ? `/analytics/sinistralidade${filtersQuery(f)}` : null);
+  const exp = useApi<Explain & { aviso?: string }>(
+    ready ? `/analytics/sinistralidade/explain${filtersQuery(f, { dimensao }, { withContrato: true })}` : null,
+  );
   const drill = useApi<Drill>(
     ready && chave
-      ? `/analytics/sinistralidade/explain/${dimensao}/${chave}${filtersQuery(f)}`
+      ? `/analytics/sinistralidade/explain/${dimensao}/${chave}${filtersQuery(f, {}, { withContrato: true })}`
       : null,
   );
 
   return (
     <div className="space-y-5">
+      {/* escopo de contrato (v1.2) */}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-slate-500">Escopo:</span>
+        <select
+          className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+          value={f.contratoId ?? ""}
+          onChange={(e) => f.setContrato(e.target.value || null)}
+        >
+          <option value="">Todos os contratos</option>
+          {(catContratos.data?.itens ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.nome}
+            </option>
+          ))}
+        </select>
+        {emContrato && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800">
+            Sem receita por contrato — análise limitada à despesa
+          </span>
+        )}
+      </div>
+
       {/* breadcrumb de investigação */}
       {chave && (
         <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -77,18 +104,22 @@ export default function SinistralidadePage() {
         </div>
       )}
 
-      <DataState isLoading={ind.isLoading && !ind.data} error={ind.error}>
-        {ind.data && (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label={`Sinistralidade líquida — ${f.competencia ? fmtCompetencia(`${f.competencia}-01`) : ""}`} value={fmtPct(ind.data.sinistralidade_atual)} />
-            <Stat label="Sinistralidade bruta" value={fmtPct(ind.data.sinistralidade_bruta)} hint="despesa bruta / receita" />
-            <Stat label="Comparação (líquida)" value={fmtPct(ind.data.sinistralidade_comparacao)} hint={f.comparacao === "ano_anterior" ? "ano anterior" : "mês anterior"} />
-            <Stat label="Variação (líquida)" value={fmtPP(ind.data.variacao_pp)} />
-          </div>
-        )}
-      </DataState>
+      {!emContrato && (
+        <DataState isLoading={ind.isLoading && !ind.data} error={ind.error}>
+          {ind.data && (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Stat label={`Sinistralidade líquida — ${f.competencia ? fmtCompetencia(`${f.competencia}-01`) : ""}`} value={fmtPct(ind.data.sinistralidade_atual)} />
+              <Stat label="Sinistralidade bruta" value={fmtPct(ind.data.sinistralidade_bruta)} hint="despesa bruta / receita" />
+              <Stat label="Comparação (líquida)" value={fmtPct(ind.data.sinistralidade_comparacao)} hint={f.comparacao === "ano_anterior" ? "ano anterior" : "mês anterior"} />
+              <Stat label="Variação (líquida)" value={fmtPP(ind.data.variacao_pp)} />
+            </div>
+          )}
+        </DataState>
+      )}
 
-      <CompositionCard />
+      <ConcentracaoBeneficiariosCard />
+
+      {!emContrato && <CompositionCard />}
 
       {ind.data?.decomposicao_receita_despesa && (
         <Card title="A variação (líquida) veio de despesa ou de receita?">

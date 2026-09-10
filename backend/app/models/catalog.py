@@ -1,14 +1,20 @@
-"""Catálogos: regiões, planos, contratos, especialidades, procedimentos, prestadores."""
+"""Catálogos: regiões, planos, contratos, especialidades, procedimentos, prestadores.
+
+Todos são **tenant-aware** (v1.2): uma operadora real traz o próprio catálogo de planos,
+contratos, prestadores etc. As chaves de negócio (`codigo`, `cid`) são únicas
+**por tenant** — `(tenant_id, codigo)` —, nunca globalmente.
+"""
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models._mixins import TenantMixin
 
 
-class Regiao(Base):
+class Regiao(TenantMixin, Base):
     __tablename__ = "regioes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -17,11 +23,12 @@ class Regiao(Base):
     macrorregiao: Mapped[str] = mapped_column(String(20))
 
 
-class Plano(Base):
+class Plano(TenantMixin, Base):
     __tablename__ = "planos"
+    __table_args__ = (UniqueConstraint("tenant_id", "codigo", name="uq_planos_tenant_codigo"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    codigo: Mapped[str] = mapped_column(String(20), unique=True)
+    codigo: Mapped[str] = mapped_column(String(20))
     nome: Mapped[str] = mapped_column(String(80))
     segmentacao: Mapped[str] = mapped_column(String(30))  # ambulatorial | hospitalar | completo
     ticket_medio_base: Mapped[Decimal] = mapped_column(Numeric(12, 2))
@@ -31,31 +38,40 @@ class Plano(Base):
     percentual_coparticipacao: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=0)
 
 
-class Contrato(Base):
+class Contrato(TenantMixin, Base):
     __tablename__ = "contratos"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     id_plano: Mapped[int] = mapped_column(ForeignKey("planos.id"), index=True)
     nome: Mapped[str] = mapped_column(String(80))
     tipo: Mapped[str] = mapped_column(String(20))  # PF | PME | Empresarial
+    # Bucket de tamanho-alvo da massa sintética (~vidas). Só orienta a geração; um
+    # cliente real não precisa fornecer isto. v1.2.
+    vidas_alvo: Mapped[int] = mapped_column(Integer, default=0)
 
     plano: Mapped[Plano] = relationship()
 
 
-class Especialidade(Base):
+class Especialidade(TenantMixin, Base):
     __tablename__ = "especialidades"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "codigo", name="uq_especialidades_tenant_codigo"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    codigo: Mapped[str] = mapped_column(String(20), unique=True)
+    codigo: Mapped[str] = mapped_column(String(20))
     nome: Mapped[str] = mapped_column(String(80))
     grupo: Mapped[str] = mapped_column(String(30))  # clinica | cirurgica | diagnostico | terapia
 
 
-class Procedimento(Base):
+class Procedimento(TenantMixin, Base):
     __tablename__ = "procedimentos"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "codigo", name="uq_procedimentos_tenant_codigo"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    codigo: Mapped[str] = mapped_column(String(20), unique=True)
+    codigo: Mapped[str] = mapped_column(String(20))
     descricao: Mapped[str] = mapped_column(String(120))
     id_especialidade: Mapped[int] = mapped_column(ForeignKey("especialidades.id"), index=True)
     grupo_procedimento: Mapped[str] = mapped_column(String(60))
@@ -71,7 +87,7 @@ class Procedimento(Base):
     especialidade: Mapped[Especialidade] = relationship()
 
 
-class Prestador(Base):
+class Prestador(TenantMixin, Base):
     __tablename__ = "prestadores"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -88,11 +104,12 @@ class Prestador(Base):
     especialidade_principal: Mapped[Especialidade] = relationship()
 
 
-class Diagnostico(Base):
+class Diagnostico(TenantMixin, Base):
     __tablename__ = "diagnosticos"
+    __table_args__ = (UniqueConstraint("tenant_id", "cid", name="uq_diagnosticos_tenant_cid"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    cid: Mapped[str] = mapped_column(String(10), unique=True)
+    cid: Mapped[str] = mapped_column(String(10))
     descricao: Mapped[str] = mapped_column(String(120))
     id_especialidade: Mapped[int | None] = mapped_column(
         ForeignKey("especialidades.id"), nullable=True, index=True

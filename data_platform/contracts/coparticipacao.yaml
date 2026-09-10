@@ -1,0 +1,40 @@
+entity: coparticipacao
+version: 1
+kind: componente_derivado          # atributo de evento_assistencial (valor_coparticipacao)
+grain: "atributo do evento_assistencial (valor_coparticipacao)"
+primary_key: [tenant_id, id_evento]
+business_keys:
+  - [tenant_id, source_system, source_record_id]
+load_strategy: "acompanha evento_assistencial"
+watermark_column: source_updated_at
+updated_at_column: source_updated_at
+deduplication_strategy: "mesma do evento"
+fields:
+  - name: valor_coparticipacao
+    type: numeric
+    nullable: false
+    required_for: [explicacao_coparticipacao]
+    classification: operational
+    description: >
+      Parcela de valor_pago cobrada do beneficiário. Reduz a despesa LÍQUIDA da operadora.
+      Se a origem não traz por evento, derivar: valor_pago * plano.percentual_coparticipacao
+      para tipos elegíveis (consulta/exame/terapia/pronto_socorro), 0 caso contrário.
+    example: 0.00
+    typical_source: "faturamento; ou derivada da regra do plano"
+    transformation: "coalesce(campo da conta, regra do plano); marcar `origem_dado`='derivada' quando calculada"
+    quality_rules: [coparticipacao_acima_permitido]
+  - name: origem_dado
+    type: string
+    nullable: true
+    required_for: []
+    classification: internal
+    description: "faturada | derivada — RECOMENDADO para não confundir número real com estimado."
+    example: "faturada"
+    typical_source: "conector"
+    transformation: "-"
+    quality_rules: []
+metadata_fields: []
+notes: >
+  Regra de elegibilidade por tipo de atendimento e percentual são do cadastro de produtos
+  (`plano.tem_coparticipacao` / `percentual_coparticipacao`). Coparticipação NUNCA incide
+  sobre internação/cirurgia/OPME no modelo sintético — confirmar a regra real por cliente.

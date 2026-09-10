@@ -1,0 +1,128 @@
+entity: beneficiario
+version: 1
+grain: "1 linha por beneficiário (vida) da operadora — estado atual"
+primary_key: [tenant_id, id_beneficiario]
+business_keys:
+  - [tenant_id, codigo]
+  - [tenant_id, source_system, source_record_id]
+load_strategy: UPSERT
+watermark_column: source_updated_at
+updated_at_column: source_updated_at
+deduplication_strategy: "business_key; em conflito vence o maior source_updated_at"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante do conector"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: id_beneficiario
+    type: bigint
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Chave técnica do W2Health (surrogate). NUNCA usar CPF/CNS como chave."
+    example: 84213
+    typical_source: "gerado no W2Health a partir da business key"
+    transformation: "surrogate key"
+    quality_rules: []
+  - name: codigo
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "Identificador do beneficiário no sistema de origem (matrícula/carteirinha), pseudonimizado. Único POR TENANT."
+    example: "BEN-000123"
+    typical_source: "cadastro / carteira"
+    transformation: "hash ou máscara do identificador de origem (nunca o CPF em claro)"
+    quality_rules: []
+  - name: data_nascimento
+    type: date
+    nullable: false
+    required_for: [beneficiary, contract]
+    classification: pii
+    description: "Usada para faixa etária e (futuro) rateio de receita por faixa."
+    example: "1961-04-12"
+    typical_source: "cadastro"
+    transformation: "-"
+    quality_rules: []
+  - name: sexo
+    type: string
+    nullable: true
+    required_for: []
+    classification: pii
+    description: "M | F (como registrado na operadora)."
+    example: "F"
+    typical_source: "cadastro"
+    transformation: "normalizar para M/F"
+    quality_rules: []
+  - name: id_plano
+    type: bigint
+    nullable: false
+    required_for: [loss_ratio, contract]
+    classification: internal
+    description: "FK para plano."
+    example: 12
+    typical_source: "cadastro"
+    transformation: "lookup plano.codigo -> id_plano"
+    quality_rules: []
+  - name: id_contrato
+    type: bigint
+    nullable: true
+    required_for: [contract, beneficiary]
+    classification: internal
+    description: "FK para contrato. Se ausente, Contract Intelligence fica indisponível."
+    example: 45
+    typical_source: "cadastro comercial"
+    transformation: "lookup contrato.codigo -> id_contrato"
+    quality_rules: [contrato_inexistente]
+  - name: data_adesao
+    type: date
+    nullable: false
+    required_for: [cohorts, contract]
+    classification: operational
+    description: "Início de vínculo. Base da coorte 'novos na carteira' e da contagem de vidas."
+    example: "2019-03-01"
+    typical_source: "movimentação cadastral"
+    transformation: "-"
+    quality_rules: [data_saida_antes_adesao]
+  - name: data_saida
+    type: date
+    nullable: true
+    required_for: [cohorts]
+    classification: operational
+    description: "Fim de vínculo (null = ativo). Base da coorte 'saíram da carteira'."
+    example: null
+    typical_source: "movimentação cadastral"
+    transformation: "-"
+    quality_rules: [data_saida_antes_adesao]
+  - name: motivo_saida
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "cancelamento | óbito | demissão | portabilidade | inadimplência. RECOMENDADO — melhora a leitura das coortes. Não modelado no W2Health v1.2."
+    example: "demissão"
+    typical_source: "movimentação cadastral"
+    transformation: "normalizar vocabulário"
+    quality_rules: []
+  - name: status
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "ativo | inativo (derivável de data_saida)."
+    example: "ativo"
+    typical_source: "cadastro"
+    transformation: "case when data_saida is null then 'ativo' else 'inativo'"
+    quality_rules: []
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]
+notes: >
+  `codigo` chega pseudonimizado. CPF/CNS, se vierem, ficam apenas em RAW cifrado e NUNCA
+  são promovidos a Silver como chave. Faixa etária é derivada por competência na Gold
+  (o W2Health v1.2 ainda fixa a faixa no seed — dívida documentada).

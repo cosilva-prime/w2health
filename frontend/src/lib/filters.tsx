@@ -9,8 +9,10 @@ export interface GlobalFilters {
   competencia: string | null; // AAAA-MM (null = última disponível)
   comparacao: string;
   competencias: string[]; // ISO date list
+  contratoId: string | null; // v1.2 — escopo de contrato (null = todos)
   setCompetencia: (v: string) => void;
   setComparacao: (v: string) => void;
+  setContrato: (v: string | null) => void;
 }
 
 const Ctx = createContext<GlobalFilters | null>(null);
@@ -29,11 +31,12 @@ export function FiltersProvider({ children }: { children: React.ReactNode }) {
 
   const competencia = params.get("competencia") ?? ultima;
   const comparacao = params.get("comparacao") ?? "mes_anterior";
+  const contratoId = params.get("contrato_id");
 
   const push = useCallback(
-    (patch: Record<string, string>) => {
+    (patch: Record<string, string | null>) => {
       const next = new URLSearchParams(params.toString());
-      for (const [k, v] of Object.entries(patch)) next.set(k, v);
+      for (const [k, v] of Object.entries(patch)) v == null ? next.delete(k) : next.set(k, v);
       router.replace(`${pathname}?${next.toString()}`, { scroll: false });
     },
     [params, pathname, router],
@@ -44,10 +47,12 @@ export function FiltersProvider({ children }: { children: React.ReactNode }) {
       competencia,
       comparacao,
       competencias,
+      contratoId,
       setCompetencia: (v) => push({ competencia: v }),
       setComparacao: (v) => push({ comparacao: v }),
+      setContrato: (v) => push({ contrato_id: v }),
     }),
-    [competencia, comparacao, competencias, push],
+    [competencia, comparacao, competencias, contratoId, push],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -60,10 +65,15 @@ export function useFilters(): GlobalFilters {
 }
 
 /** Querystring padrão para os endpoints, a partir dos filtros globais. */
-export function filtersQuery(f: GlobalFilters, extra: Record<string, string> = {}): string {
+export function filtersQuery(
+  f: GlobalFilters,
+  extra: Record<string, string> = {},
+  opts: { withContrato?: boolean } = {},
+): string {
   const p = new URLSearchParams();
   if (f.competencia) p.set("competencia", f.competencia);
   p.set("comparacao", f.comparacao);
+  if (opts.withContrato && f.contratoId) p.set("contrato_id", f.contratoId);
   for (const [k, v] of Object.entries(extra)) p.set(k, v);
   return `?${p.toString()}`;
 }

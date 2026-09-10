@@ -65,6 +65,7 @@ class Catalogo:
     plano_ticket: np.ndarray
     plano_copart_pct: np.ndarray       # índice alinhado a plano_ids — 0 se plano sem coparticipação
     contrato_por_plano: dict[int, list[int]]
+    contrato_pesos_por_plano: dict[int, np.ndarray]  # v1.2 — pesos (vidas_alvo) alinhados a contrato_por_plano
     espec_id: dict[str, int]           # slug -> id
     espec_id_arr: np.ndarray           # index alinhado a ESPEC_SLUGS
     proc_by_espec: dict[str, list[dict]]   # slug -> [{id, codigo, custo_base, tipo, idade_min/max, peso}]
@@ -90,8 +91,12 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
             )
         )
 
+    tid = cfg.tenant_id
+
     # Regiões
-    regioes = [Regiao(cidade=c, uf=uf, macrorregiao=mr) for (c, uf, mr, _w) in REGIOES]
+    regioes = [
+        Regiao(tenant_id=tid, cidade=c, uf=uf, macrorregiao=mr) for (c, uf, mr, _w) in REGIOES
+    ]
     session.add_all(regioes)
     session.flush()
     regiao_ids = [r.id for r in regioes]
@@ -101,7 +106,7 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
     # Planos
     planos = [
         Plano(
-            codigo=cod, nome=nome, segmentacao=seg, ticket_medio_base=tk,
+            tenant_id=tid, codigo=cod, nome=nome, segmentacao=seg, ticket_medio_base=tk,
             tem_coparticipacao=copart, percentual_coparticipacao=copart_pct,
         )
         for (cod, nome, seg, tk, copart, copart_pct) in PLANOS
@@ -116,20 +121,29 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
         dtype=float,
     )
 
-    # Contratos
+    # Contratos (v1.2 — vários por plano, tamanhos distintos)
     contrato_por_plano: dict[int, list[int]] = {pid: [] for pid in plano_ids}
+    contrato_pesos_por_plano: dict[int, list[float]] = {pid: [] for pid in plano_ids}
     contratos = []
-    for cod, nome, tipo in CONTRATOS:
-        c = Contrato(id_plano=plano_id_by_cod[cod], nome=nome, tipo=tipo)
+    for cod, nome, tipo, vidas_alvo in CONTRATOS:
+        c = Contrato(
+            tenant_id=tid, id_plano=plano_id_by_cod[cod], nome=nome, tipo=tipo,
+            vidas_alvo=int(vidas_alvo),
+        )
         contratos.append(c)
     session.add_all(contratos)
     session.flush()
     for c in contratos:
         contrato_por_plano[c.id_plano].append(c.id)
+        contrato_pesos_por_plano[c.id_plano].append(float(max(c.vidas_alvo, 1)))
+    contrato_pesos_np = {
+        pid: (np.array(w, dtype=float) / sum(w)) if w else np.array([], dtype=float)
+        for pid, w in contrato_pesos_por_plano.items()
+    }
 
     # Especialidades
     especs = [
-        Especialidade(codigo=slug.upper()[:20], nome=nome, grupo=grupo)
+        Especialidade(tenant_id=tid, codigo=slug.upper()[:20], nome=nome, grupo=grupo)
         for (slug, nome, grupo) in ESPECIALIDADES
     ]
     session.add_all(especs)
@@ -142,7 +156,7 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
     for (cod, desc, eslug, grupo, cx, custo, tipo, imin, imax) in PROCEDIMENTOS:
         proc_rows.append(
             Procedimento(
-                codigo=cod, descricao=desc, id_especialidade=espec_id[eslug],
+                tenant_id=tid, codigo=cod, descricao=desc, id_especialidade=espec_id[eslug],
                 grupo_procedimento=grupo, complexidade=cx, custo_base=custo,
                 tipo_atendimento_tipico=tipo, idade_min=imin, idade_max=imax,
                 perfil_utilizacao=GRUPO_PERFIL_UTILIZACAO.get(grupo, "variavel"),
@@ -164,8 +178,13 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
         proc_meta[pr.id] = {"grupo": pr.grupo_procedimento, "espec": eslug, "codigo": pr.codigo}
 
     # Diagnósticos
-    diags = [Diagnostico(cid=cid, descricao=desc, id_especialidade=espec_id.get(es) if es else None)
-             for (cid, desc, es) in DIAGNOSTICOS]
+    diags = [
+        Diagnostico(
+            tenant_id=tid, cid=cid, descricao=desc,
+            id_especialidade=espec_id.get(es) if es else None,
+        )
+        for (cid, desc, es) in DIAGNOSTICOS
+    ]
     session.add_all(diags)
     session.flush()
     diag_by_espec: dict[str, list[int]] = {s: [] for s in ESPEC_SLUGS}
@@ -174,7 +193,7 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
             diag_by_espec[spec[2]].append(dg.id)
 
     # Prestadores
-    prest_rows = _build_prestadores(rng, espec_id, regiao_ids)
+    prest_rows = _build_prestadores(rng, espec_id, regiao_ids, tenant_id=tid)
     session.add_all(prest_rows)
     session.flush()
     prest_by_espec: dict[str, dict] = {}
@@ -193,12 +212,13 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
         regiao_ids=regiao_ids, regiao_pesos=regiao_pesos, plano_ids=plano_ids,
         plano_ticket=plano_ticket, plano_copart_pct=plano_copart_pct,
         contrato_por_plano=contrato_por_plano,
+        contrato_pesos_por_plano=contrato_pesos_np,
         espec_id=espec_id, espec_id_arr=espec_id_arr, proc_by_espec=proc_by_espec,
         prest_by_espec=prest_by_espec, diag_by_espec=diag_by_espec, proc_meta=proc_meta,
     )
 
 
-def _build_prestadores(rng, espec_id, regiao_ids) -> list[Prestador]:
+def _build_prestadores(rng, espec_id, regiao_ids, tenant_id: str) -> list[Prestador]:
     rows: list[Prestador] = []
     hosp_iter = iter(_HOSP_NOMES)
     clin_iter = iter(_CLIN_NOMES)
@@ -229,7 +249,7 @@ def _build_prestadores(rng, espec_id, regiao_ids) -> list[Prestador]:
             nivel = float(np.clip(rng.normal(1.0, 0.10), 0.82, 1.30))
             rows.append(
                 Prestador(
-                    nome_ficticio=nome, tipo_prestador=tipo,
+                    tenant_id=tenant_id, nome_ficticio=nome, tipo_prestador=tipo,
                     id_regiao=int(rng.choice(regiao_ids)),
                     id_especialidade_principal=espec_id[slug],
                     nivel_preco=round(nivel, 3),
@@ -250,6 +270,7 @@ class Carteira:
     regiao_id: np.ndarray
     adesao_ym: np.ndarray
     saida_ym: np.ndarray        # 999999 se ativo
+    contrato_id: np.ndarray = field(default_factory=lambda: np.array([]))  # v1.2 — id do contrato por beneficiário
     scenario_flags: dict = field(default_factory=dict)
 
 
@@ -290,6 +311,20 @@ def generate_beneficiarios(
     dur = rng.integers(3, fim_ym - inicio_ym + 6, n)
     saida_ym = np.where(sai, np.maximum(adesao_ym + dur, inicio_ym + 2), 999_999)
 
+    # id_contrato: escolha ponderada pelo tamanho-alvo (vidas_alvo) do contrato, dentro do
+    # plano do beneficiário (v1.2). RNG DEDICADO — não perturba o stream principal usado
+    # pela geração de eventos e pelos cenários (S1–S13 permanecem calibrados).
+    crng = np.random.default_rng(cfg.seed + 909)
+    contrato_ids = np.zeros(n, dtype=np.int64)
+    for pos, pid in enumerate(cat.plano_ids):
+        mask = plano_pos == pos
+        m = int(mask.sum())
+        if m == 0:
+            continue
+        opts = np.asarray(cat.contrato_por_plano[pid], dtype=np.int64)
+        probs = cat.contrato_pesos_por_plano[pid]
+        contrato_ids[mask] = crng.choice(opts, size=m, p=probs if probs.size else None)
+
     # persistência
     rows = []
     dnasc = []
@@ -315,20 +350,18 @@ def generate_beneficiarios(
                 "faixa_etaria": faixa_etaria(int(idade_hoje)),
                 "id_regiao": int(regiao_id[i]),
                 "id_plano": int(cat.plano_ids[int(plano_pos[i])]),
-                "id_contrato": int(
-                    rng.choice(cat.contrato_por_plano[int(cat.plano_ids[int(plano_pos[i])])])
-                ),
+                "id_contrato": int(contrato_ids[i]),
                 "data_adesao": adesao,
                 "data_saida": saida,
                 "status": "ativo" if saida is None or saida > cfg.fim else "inativo",
             }
         )
-    _bulk_insert(session, Beneficiario, rows, cfg.chunk)
+    _bulk_insert(session, Beneficiario, rows, cfg.chunk, tenant_id=cfg.tenant_id)
     ids = np.array(session.execute(select(Beneficiario.id).order_by(Beneficiario.id)).scalars().all())
 
     return Carteira(
         ids=ids, idade_ym=nasc_ym, sexo=sexo, plano_pos=plano_pos, regiao_id=regiao_id,
-        adesao_ym=adesao_ym, saida_ym=saida_ym,
+        adesao_ym=adesao_ym, saida_ym=saida_ym, contrato_id=contrato_ids,
     )
 
 
@@ -542,7 +575,7 @@ def generate_eventos(
                 }
             )
         rows.extend(extra_rows)
-        _bulk_insert(session, EventoAssistencial, rows, cfg.chunk)
+        _bulk_insert(session, EventoAssistencial, rows, cfg.chunk, tenant_id=cfg.tenant_id)
         total_eventos += len(rows)
         despesa_mes[t] = float(sum(r["valor_pago"] for r in rows))
 
@@ -598,7 +631,7 @@ def generate_receitas(
                     "receita_contraprestacao": round(float(receita), 2),
                 }
             )
-    _bulk_insert(session, Receita, rows, cfg.chunk)
+    _bulk_insert(session, Receita, rows, cfg.chunk, tenant_id=cfg.tenant_id)
 
 
 # ----------------------------------------------------------------------------------
@@ -649,11 +682,19 @@ def new_event_row(
     }
 
 
-def _bulk_insert(session: Session, model, rows: list[dict], chunk: int) -> None:
+def _bulk_insert(
+    session: Session, model, rows: list[dict], chunk: int, tenant_id: str | None = None
+) -> None:
     """Inserção em massa via COPY FROM STDIN (psycopg3) — ordens de grandeza mais rápido
-    que executemany em conexões com latência (ex.: port-forward do Docker Desktop)."""
+    que executemany em conexões com latência (ex.: port-forward do Docker Desktop).
+
+    `tenant_id`: quando informado, carimba `tenant_id` em toda linha (v1.2). Fica fora
+    do dict de negócio para não poluir a lógica de geração.
+    """
     if not rows:
         return
+    if tenant_id is not None:
+        rows = [{"tenant_id": tenant_id, **r} for r in rows]
     table = model.__tablename__
     cols = list(rows[0].keys())
     col_list = ", ".join(cols)
@@ -665,10 +706,13 @@ def _bulk_insert(session: Session, model, rows: list[dict], chunk: int) -> None:
 
 
 def wipe_dados(session: Session) -> None:
-    """Limpa tudo (ordem respeita FKs). Não mexe em `alembic_version`."""
+    """Limpa tudo (ordem respeita FKs). Não mexe em `alembic_version` nem em `tenants`."""
+    from app.models import AggContratoCompetencia, ReceitaContrato
+
     for model in (
         AggCompetenciaDimensao, AggPrestadorCompetencia, AggBeneficiarioCompetencia,
-        AggSinistralidadeCompetencia, EventoAssistencial, Receita, Beneficiario,
+        AggContratoCompetencia, AggSinistralidadeCompetencia, ReceitaContrato,
+        EventoAssistencial, Receita, Beneficiario,
         Prestador, Procedimento, Diagnostico, Especialidade, Contrato, Plano,
         Regiao, Competencia, CenarioGabarito, SeedManifest,
     ):

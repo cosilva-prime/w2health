@@ -235,6 +235,34 @@ def gerar(session: Session, competencia: date, comparacao: str = "mes_anterior")
             metodologia="share dos 5% maiores; Gini sobre despesa por beneficiário.",
         ))
 
+    # 8b) Concentração da VARIAÇÃO em beneficiários (C1 — v1.2) -----------------
+    cv = decomposition.concentracao_variacao_beneficiarios(session, competencia, comparacao)
+    if cv and cv["n_beneficiarios_com_aumento"] > 0 and cv["delta_positivo_total"] > 0:
+        n50 = cv["n_para_credito_50pct"]
+        top3 = cv["top"][:3]
+        poucos = n50 <= max(3, round(cv["n_beneficiarios_com_aumento"] * 0.05))
+        if poucos or cv["top5_share_do_aumento"] >= 0.40:
+            insights.append(_mk(
+                "concentracao_variacao_beneficiarios",
+                "alta" if cv["top5_share_do_aumento"] >= 0.5 else "media",
+                f"{n50} beneficiário(s) concentram metade do aumento de despesa líquida",
+                f"Os 5 maiores respondem por {cv['top5_share_do_aumento'] * 100:.0f}% do "
+                f"aumento (R$ {cv['delta_positivo_total']:,.0f}); maiores: "
+                f"{', '.join(t['codigo'] for t in top3)}.".replace(",", "."),
+                {
+                    "n_para_credito_50pct": n50,
+                    "top5_share_do_aumento": cv["top5_share_do_aumento"],
+                    "gini_do_aumento": cv["gini_do_aumento"],
+                    "delta_positivo_total": cv["delta_positivo_total"],
+                    "n_beneficiarios_com_aumento": cv["n_beneficiarios_com_aumento"],
+                    "top": [{"codigo": t["codigo"], "delta": t["delta"]} for t in top3],
+                },
+                {"rota": "/beneficiarios",
+                 "params": {"competencia": competencia.isoformat(), "comparacao": comparacao}},
+                score=cv["top5_share_do_aumento"] * 6.0 + 1.0,
+                metodologia=cv["metodologia"],
+            ))
+
     # 9) Melhora / redução (maior fator negativo) -------------------------------
     reducoes = exp_esp["fatores_reducao"] + exp_grp["fatores_reducao"]
     reducoes = [r for r in reducoes if r["impacto_financeiro"] < 0]

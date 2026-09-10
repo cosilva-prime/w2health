@@ -146,3 +146,85 @@ def test_explain_causas_endpoint(api):
 
 def test_competencia_invalida_404(api):
     assert api.get("/api/analytics/sinistralidade?competencia=2030-01").status_code == 404
+
+
+# =====================================================================================
+# v1.2 — contratos, concentração da variação, escopo de contrato
+# =====================================================================================
+def test_lista_contratos_endpoint(api):
+    r = api.get("/api/analytics/contratos?competencia=2026-09")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["receita_disponivel"] is False
+    assert b["total"] >= 1 and len(b["itens"]) == b["total"]
+    it = b["itens"][0]
+    assert "despesa_liquida" in it and "gini" in it and "sinistralidade" not in it
+
+
+def test_detalhe_contrato_endpoint(api):
+    lista = api.get("/api/analytics/contratos?competencia=2026-09").json()["itens"]
+    cid = lista[0]["id_contrato"]
+    r = api.get(f"/api/analytics/contratos/{cid}?competencia=2026-09")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["receita_disponivel"] is False
+    assert "Receita por contrato ainda não disponível" in b["aviso"]
+    assert "concentracao" in b and "evolucao" in b
+    assert api.get("/api/analytics/contratos/999999?competencia=2026-09").status_code == 404
+
+
+def test_concentracao_variacao_endpoint(api):
+    r = api.get("/api/analytics/sinistralidade/concentracao-variacao?competencia=2026-09")
+    assert r.status_code == 200
+    b = r.json()
+    assert "top" in b and "n_para_credito_50pct" in b and "gini_do_aumento" in b
+
+
+def test_explain_com_contrato_id(api):
+    cid = api.get("/api/analytics/contratos?competencia=2026-09").json()["itens"][0]["id_contrato"]
+    r = api.get(f"/api/analytics/sinistralidade/explain?competencia=2026-09&contrato_id={cid}")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["sinistralidade_atual"] is None
+    assert b["efeito_receita_pp"] is None
+    assert b["escopo"]["id_contrato"] == cid
+    # contrato inexistente -> 404
+    assert api.get(
+        "/api/analytics/sinistralidade/explain?competencia=2026-09&contrato_id=999999"
+    ).status_code == 404
+
+
+def test_composicao_por_dimensao_endpoint(api):
+    r = api.get(
+        "/api/analytics/sinistralidade/composicao?competencia=2026-09&dimensao=especialidade&chave=1"
+    )
+    assert r.status_code == 200
+    b = r.json()
+    assert b["decomposicao"] is None  # sem receita no escopo de dimensão
+    a = b["atual"]
+    assert a["despesa_liquida"] == pytest.approx(
+        a["despesa_bruta"] - a["glosas"] - a["coparticipacao"], abs=0.5
+    )
+
+
+def test_catalogo_contratos(api):
+    r = api.get("/api/catalogos/contratos")
+    assert r.status_code == 200
+    assert len(r.json()["itens"]) >= 40
+
+
+def test_beneficiario_detalhe_tem_comportamento(api):
+    r = api.get("/api/analytics/beneficiarios/BEN-000001?competencia=2026-09")
+    assert r.status_code == 200
+    b = r.json()
+    assert "comportamento" in b
+    if b["comportamento"]:
+        assert "recorrencia" in b["comportamento"]
+        assert "participacao_variacao" in b["comportamento"]
+
+
+def test_novos_casos_alto_custo_endpoint(api):
+    r = api.get("/api/analytics/beneficiarios/novos-casos-alto-custo?competencia=2026-09")
+    assert r.status_code == 200
+    b = r.json()
+    assert "total" in b and "itens" in b and "limiar" in b

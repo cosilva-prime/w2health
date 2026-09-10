@@ -7,6 +7,7 @@ from sqlalchemy import BigInteger, Date, ForeignKey, Index, Integer, Numeric, St
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.models._mixins import TenantMixin
 
 # Tipos de atendimento admitidos (validação em código; armazenado como texto).
 TIPOS_ATENDIMENTO = (
@@ -20,7 +21,7 @@ TIPOS_ATENDIMENTO = (
 )
 
 
-class EventoAssistencial(Base):
+class EventoAssistencial(TenantMixin, Base):
     __tablename__ = "eventos_assistenciais"
     __table_args__ = (
         Index("ix_evento_comp_espec", "competencia", "id_especialidade"),

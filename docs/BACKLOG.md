@@ -70,6 +70,28 @@ Ver [V1.1.md](V1.1.md) para o detalhamento completo. Resumo:
 - **Não implementado, por decisão explícita**: reajuste contratual — permanece só como
   análise em [EVOLUCAO_FEEDBACK_ESPECIALISTA.md](EVOLUCAO_FEEDBACK_ESPECIALISTA.md).
 
+## v1.2 — Evolução analítica + fundação de dados SaaS  ✅
+
+Ver [V1.2.md](V1.2.md). Resumo:
+
+- **C1** concentração de beneficiários no topo da explicação (`concentracao_variacao_beneficiarios`
+  + insight + endpoint). **C2** composição financeira propagada às `agg_*` +
+  `/composicao?dimensao=|contrato_id=`. **C3** `contrato_id` em `explicar/drill/causas`
+  (cálculo sob demanda, sem receita). **C4** `agg_contrato_competencia` + `/analytics/contratos[/{id}]`
+  + telas `/contratos` e `/contratos/[id]` (sem sinistralidade contratual — aviso explícito).
+  **C5** descritores de beneficiário (recorrência, novo caso de alto custo, evento pontual,
+  participação na variação). **C6** indicadores de alerta de contrato/beneficiário. ✅
+- **Fundação de dados**: `tenant_id` em todas as tabelas (mixin) + `tenants` + chaves de
+  negócio compostas; `app/models/platform.py` (controle de ingestão, estrutura); pasta
+  `data_platform/` (13 contratos canônicos, mappings, SQL silver→gold→serving, regras de
+  qualidade); docs `DATA_PLATFORM_ARCHITECTURE`, `CANONICAL_DATA_MODEL`, `DATA_CONTRACT`,
+  `MULTI_TENANCY`, `DATA_QUALITY`, `CLIENT_ONBOARDING`, `CAPABILITY_READINESS`,
+  `INTEGRATION_GUIDE`, `DATA_DICTIONARY`, `SOURCE_MAPPING_TEMPLATE`. ✅
+- Massa sintética: **48 contratos** (era 12), **6 cenários novos** (S14–S19).
+- Testes: 81 → **120** (suíte anterior 100% preservada).
+- **Não implementado, por decisão explícita**: RLS/filtro de tenant nas queries (Fase 2),
+  receita por contrato, conectores reais, reajuste, previsão.
+
 ## Roadmap (fora do escopo)
 
 **Reajuste contratual** (motor de simulação parametrizável — analisado, não

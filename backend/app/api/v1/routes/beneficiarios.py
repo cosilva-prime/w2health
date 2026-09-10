@@ -1,4 +1,9 @@
-"""Beneficiários (anonimizados) e jornada simplificada."""
+"""Beneficiários (anonimizados) e jornada simplificada.
+
+v1.2: `lista` aceita `?id_contrato=`; `detalhe` traz o bloco `comportamento` (recorrência,
+participação na variação, eventos pontuais de alto custo); novo endpoint
+`/novos-casos-alto-custo`.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.analytics import beneficiaries
-from app.api.v1.routes._common import competencia_dep
+from app.analytics.periodo import parse_competencia
+from app.api.v1.routes._common import comparacao_dep, competencia_dep, contrato_id_dep
 from app.db.session import get_db
 from app.repositories import analytics_repo as repo
 
@@ -33,15 +39,36 @@ def lista(
     faixa_etaria: str | None = Query(None),
     sexo: str | None = Query(None),
     id_plano: int | None = Query(None),
+    id_contrato: int | None = Depends(contrato_id_dep),
     db: Session = Depends(get_db),
 ) -> dict:
-    return beneficiaries.lista(db, competencia, page, page_size, faixa_etaria, sexo, id_plano)
+    return beneficiaries.lista(
+        db, competencia, page, page_size, faixa_etaria, sexo, id_plano, id_contrato
+    )
 
 
-@router.get("/{id_ou_codigo}", summary="Detalhe anonimizado + evolução mensal + eventos")
-def detalhe(id_ou_codigo: str, db: Session = Depends(get_db)) -> dict:
+@router.get(
+    "/novos-casos-alto-custo",
+    summary="C5 — beneficiários que cruzaram o limiar de despesa líquida sem histórico",
+)
+def novos_casos_alto_custo(
+    competencia: date = Depends(competencia_dep),
+    comparacao: str = Depends(comparacao_dep),
+    id_contrato: int | None = Depends(contrato_id_dep),
+    db: Session = Depends(get_db),
+) -> dict:
+    return beneficiaries.novos_casos_alto_custo(db, competencia, comparacao, contrato_id=id_contrato)
+
+
+@router.get("/{id_ou_codigo}", summary="Detalhe anonimizado + evolução mensal + eventos + comportamento")
+def detalhe(
+    id_ou_codigo: str,
+    competencia: str | None = Query(None, description="AAAA-MM — referência do bloco de comportamento."),
+    db: Session = Depends(get_db),
+) -> dict:
+    comp = parse_competencia(competencia) if competencia else None
     try:
-        return beneficiaries.detalhe(db, _resolve_id(db, id_ou_codigo))
+        return beneficiaries.detalhe(db, _resolve_id(db, id_ou_codigo), comp)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
 

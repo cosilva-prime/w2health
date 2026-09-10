@@ -1,0 +1,45 @@
+entity: tenant
+version: 1
+grain: "1 linha por cliente (operadora) da plataforma W2Health"
+primary_key: [id]
+business_keys:
+  - [id]
+load_strategy: FULL
+watermark_column: null
+updated_at_column: null
+deduplication_strategy: "id (slug) único global"
+fields:
+  - name: id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Slug do cliente. Vai em `tenant_id` de TODAS as demais entidades."
+    example: "operadora-alfa"
+    typical_source: "definido no onboarding, não vem de sistema de origem"
+    transformation: "constante do conector"
+    quality_rules: []
+  - name: nome
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Razão social / nome de exibição da operadora."
+    example: "Operadora Alfa Saúde"
+    typical_source: "onboarding"
+    transformation: "-"
+    quality_rules: []
+  - name: status
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "onboarding | ativo | suspenso"
+    example: "ativo"
+    typical_source: "gestão da plataforma"
+    transformation: "-"
+    quality_rules: []
+metadata_fields: []
+notes: >
+  `tenant` é o único cadastro global da plataforma (não tem `tenant_id`). Toda linha de
+  qualquer outra entidade DEVE referenciar um `tenant.id` existente.

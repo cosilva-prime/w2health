@@ -63,6 +63,8 @@ def competencias(db: Session = Depends(get_db)) -> dict:
 def catalogos(nome: str, db: Session = Depends(get_db)) -> dict:
     consultas = {
         "planos": "SELECT id, nome FROM planos ORDER BY nome",
+        "contratos": "SELECT ct.id, ct.nome || ' (' || pl.nome || ')' AS nome "
+                     "FROM contratos ct JOIN planos pl ON pl.id = ct.id_plano ORDER BY ct.nome",
         "regioes": "SELECT id, cidade || '/' || uf AS nome FROM regioes ORDER BY nome",
         "especialidades": "SELECT id, nome FROM especialidades ORDER BY nome",
         "grupos-despesa": "SELECT DISTINCT grupo_procedimento AS id, grupo_procedimento AS nome FROM procedimentos ORDER BY 1",

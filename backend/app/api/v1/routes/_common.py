@@ -37,3 +37,17 @@ def comparacao_dep(
     if comparacao not in COMPARACOES:
         raise HTTPException(422, f"comparacao inválida. Use uma de: {', '.join(COMPARACOES)}")
     return comparacao
+
+
+def contrato_id_dep(
+    contrato_id: int | None = Query(
+        None, description="v1.2 — restringe a análise a um contrato (sem receita própria)."
+    ),
+    db: Session = Depends(get_db),
+) -> int | None:
+    if contrato_id is None:
+        return None
+    existe = repo.contrato_info(db, contrato_id)
+    if existe is None:
+        raise HTTPException(404, f"Contrato inexistente: {contrato_id}")
+    return contrato_id

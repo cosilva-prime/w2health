@@ -200,6 +200,89 @@ def test_revenue_dominant_worsening_scenario_detected(db, gabarito):
     assert max(todos, key=lambda k: todos[k]) == "efeito_receita_pp"
 
 
+# =====================================================================================
+# v1.2 — S14..S19: contrato como unidade de análise
+# =====================================================================================
+def _contrato_alvo(g: dict) -> int:
+    return int(g["params"]["id_contrato"])
+
+
+def test_s14_contract_concentration_detected(db, gabarito):
+    from app.analytics import contratos, decomposition
+
+    g = gabarito["s14_contrato_concentracao"]
+    comp, cid = _competencia_alvo(g), int(g["chave_alvo"])
+    cc = repo.contrato_competencia(db, cid, comp)
+    assert cc is not None and cc["despesa_liquida"] > 0
+    # concentração alta no contrato E na variação
+    assert cc["top5_share"] >= 0.45 or cc["gini"] >= 0.6
+    cv = decomposition.concentracao_variacao_beneficiarios(db, comp, "mes_anterior", cid)
+    assert cv["n_para_credito_50pct"] <= 5
+
+
+def test_s15_contract_homogeneous_increase_detected(db, gabarito):
+    from app.analytics import decomposition
+
+    g = gabarito["s15_contrato_homogeneo"]
+    comp, cid = _competencia_alvo(g), int(g["chave_alvo"])
+    cv = decomposition.concentracao_variacao_beneficiarios(db, comp, "mes_anterior", cid)
+    g19 = gabarito["s19_contrato_concentracao_extrema"]
+    cv19 = decomposition.concentracao_variacao_beneficiarios(
+        db, _competencia_alvo(g19), "mes_anterior", int(g19["chave_alvo"])
+    )
+    # o aumento do contrato "homogêneo" é bem menos concentrado que o do "extremo"
+    assert cv["n_beneficiarios_com_aumento"] >= 30
+    assert cv["top5_share_do_aumento"] < cv19["top5_share_do_aumento"]
+    assert cv["n_para_credito_50pct"] >= 6
+
+
+def test_s16_new_high_cost_case_detected(db, gabarito):
+    from app.analytics import beneficiaries
+
+    g = gabarito["s16_contrato_novo_alto_custo"]
+    comp, cid = _competencia_alvo(g), _contrato_alvo(g)
+    res = beneficiaries.novos_casos_alto_custo(db, comp, "mes_anterior", contrato_id=cid)
+    assert res["total"] >= 1
+    novo = res["itens"][0]
+    assert novo["despesa_liquida"] >= res["limiar"]
+    assert novo["maior_despesa_anterior"] < res["limiar"] * 0.25
+
+
+def test_s17_recurring_group_detected(db, gabarito):
+    g = gabarito["s17_contrato_recorrente"]
+    comp, cid = _competencia_alvo(g), int(g["chave_alvo"])
+    from app.analytics.beneficiaries import JANELA_RECORRENCIA
+
+    recor = {r["id"]: r["meses_com_evento"]
+             for r in repo.recorrencia_beneficiarios_mes(db, comp, JANELA_RECORRENCIA)}
+    ids_ctr = {b["id"] for b in repo.beneficiarios_liquida_contrato_mes(db, comp, cid)}
+    frequentes = [i for i in ids_ctr if recor.get(i, 0) >= 4]
+    assert len(frequentes) >= 10, "grupo recorrente do contrato não identificável"
+
+
+def test_s18_one_off_event_hypothesis(db, gabarito):
+    from app.analytics import cohorts
+
+    g = gabarito["s18_contrato_evento_pontual"]
+    # o cenário injeta em nov/2026 e NÃO repete em dez -> coorte de dez classifica HIPÓTESE
+    comp = date(2026, 12, 1)
+    res = cohorts.analisar_causas(db, "procedimento", g["chave_alvo"], comp, "mes_anterior")
+    permanece = next(
+        (c for c in res["coortes"] if c["codigo"] == "permaneceram_sem_evento"), None
+    )
+    assert permanece is not None
+    tipos = {e["tipo_evidencia"] for e in permanece["evidencias"]}
+    assert "HIPOTESE" in tipos, "colecistectomia (pontual) deveria gerar HIPÓTESE de episódio concluído"
+
+
+def test_s19_extreme_concentration_detected(db, gabarito):
+    g = gabarito["s19_contrato_concentracao_extrema"]
+    comp, cid = _competencia_alvo(g), int(g["chave_alvo"])
+    cc = repo.contrato_competencia(db, cid, comp)
+    assert cc is not None
+    assert cc["gini"] >= 0.75 or cc["top5_share"] >= 0.7
+
+
 # ------------------------------------------------------ S9 — RECEITA ESTAGNADA
 def test_revenue_behavior_scenario_detected(db, gabarito):
     serie = sinistralidade.serie(db)

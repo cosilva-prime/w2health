@@ -1,0 +1,66 @@
+entity: receita
+version: 1
+grain: "1 linha por competência × plano — contraprestação (receita) reconhecida"
+primary_key: [tenant_id, competencia, id_plano]
+business_keys:
+  - [tenant_id, competencia, id_plano]
+load_strategy: UPSERT
+watermark_column: competencia
+updated_at_column: source_updated_at
+deduplication_strategy: "business_key; retificação sobrescreve (mantém raw_payload_hash anterior em RAW)"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: competencia
+    type: date
+    nullable: false
+    required_for: [sinistralidade, loss_ratio]
+    classification: internal
+    description: "Mês de competência da receita (1º dia)."
+    example: "2026-07-01"
+    typical_source: "faturamento / contábil"
+    transformation: "date_trunc('month', ...)"
+    quality_rules: [competencia_invalida]
+  - name: id_plano
+    type: bigint
+    nullable: false
+    required_for: [loss_ratio]
+    classification: internal
+    description: "FK plano."
+    example: 12
+    typical_source: "faturamento"
+    transformation: "lookup"
+    quality_rules: []
+  - name: quantidade_beneficiarios
+    type: int
+    nullable: false
+    required_for: [sinistralidade]
+    classification: operational
+    description: "Vidas expostas no mês (base do PMPM / exposição)."
+    example: 1840
+    typical_source: "faturamento / cadastro"
+    transformation: "-"
+    quality_rules: [valor_negativo]
+  - name: receita_contraprestacao
+    type: numeric
+    nullable: false
+    required_for: [sinistralidade, loss_ratio]
+    classification: operational
+    description: "Contraprestação (prêmio) reconhecida no mês para o plano."
+    example: 6620000.00
+    typical_source: "faturamento / contábil"
+    transformation: "somar mensalidades/parcelas da competência"
+    quality_rules: [valor_negativo, receita_duplicada]
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]
+notes: >
+  É o grão MÍNIMO para calcular sinistralidade. Vem do sistema de faturamento/contábil —
+  quase sempre uma fonte distinta do assistencial/TISS.

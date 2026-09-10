@@ -1,0 +1,83 @@
+entity: procedimento
+version: 1
+grain: "1 linha por procedimento / item assistencial (código de tabela)"
+primary_key: [tenant_id, id_procedimento]
+business_keys:
+  - [tenant_id, codigo]
+load_strategy: FULL
+watermark_column: null
+updated_at_column: null
+deduplication_strategy: "business_key"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: id_procedimento
+    type: bigint
+    nullable: false
+    required_for: [loss_ratio]
+    classification: internal
+    description: "Surrogate key."
+    example: 1162
+    typical_source: "gerado"
+    transformation: "surrogate"
+    quality_rules: []
+  - name: codigo
+    type: string
+    nullable: false
+    required_for: [loss_ratio]
+    classification: operational
+    description: "Código do procedimento (TUSS/CBHPM ou tabela própria). Único por tenant."
+    example: "CIR-CAT"
+    typical_source: "tabela de procedimentos"
+    transformation: "-"
+    quality_rules: []
+  - name: descricao
+    type: string
+    nullable: false
+    required_for: [loss_ratio]
+    classification: operational
+    description: "Descrição do procedimento."
+    example: "Facectomia com implante de LIO (catarata)"
+    typical_source: "tabela de procedimentos"
+    transformation: "-"
+    quality_rules: []
+  - name: id_especialidade
+    type: bigint
+    nullable: true
+    required_for: [loss_ratio]
+    classification: internal
+    description: "Especialidade típica do procedimento."
+    example: 5
+    typical_source: "tabela / classificação"
+    transformation: "lookup"
+    quality_rules: []
+  - name: grupo_procedimento
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "Agrupador de análise (ex.: 'Cirurgias oftalmológicas', 'Consultas', 'Internações clínicas')."
+    example: "Cirurgias oftalmológicas"
+    typical_source: "classificação própria"
+    transformation: "mapear código -> grupo"
+    quality_rules: []
+  - name: perfil_utilizacao
+    type: string
+    nullable: true
+    required_for: [cohorts]
+    classification: operational
+    description: "pontual | recorrente | variavel. APOIA (nunca prova) a hipótese de 'episódio concluído' nas coortes."
+    example: "pontual"
+    typical_source: "derivado de grupo_procedimento"
+    transformation: "mapa grupo -> perfil (ver backend/app/seed/catalogs.py::GRUPO_PERFIL_UTILIZACAO)"
+    quality_rules: []
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]

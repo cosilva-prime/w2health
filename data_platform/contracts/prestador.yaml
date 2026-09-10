@@ -1,0 +1,83 @@
+entity: prestador
+version: 1
+grain: "1 linha por prestador (hospital, clínica, laboratório, PA, consultório)"
+primary_key: [tenant_id, id_prestador]
+business_keys:
+  - [tenant_id, codigo]
+load_strategy: UPSERT
+watermark_column: source_updated_at
+updated_at_column: source_updated_at
+deduplication_strategy: "business_key"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: id_prestador
+    type: bigint
+    nullable: false
+    required_for: [provider]
+    classification: internal
+    description: "Surrogate key."
+    example: 3110
+    typical_source: "gerado"
+    transformation: "surrogate"
+    quality_rules: []
+  - name: codigo
+    type: string
+    nullable: false
+    required_for: [provider]
+    classification: operational
+    description: "Código do prestador na operadora (ou CNES mascarado). Único por tenant."
+    example: "PREST-000120"
+    typical_source: "rede credenciada"
+    transformation: "-"
+    quality_rules: []
+  - name: nome_ficticio
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "Nome de exibição (pode ser mascarado)."
+    example: "Hospital São Lucas"
+    typical_source: "rede credenciada"
+    transformation: "-"
+    quality_rules: []
+  - name: tipo_prestador
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "hospital | clinica | laboratorio | pronto_atendimento | consultorio."
+    example: "hospital"
+    typical_source: "rede credenciada"
+    transformation: "normalizar"
+    quality_rules: []
+  - name: id_regiao
+    type: bigint
+    nullable: true
+    required_for: []
+    classification: internal
+    description: "FK região do prestador."
+    example: 4
+    typical_source: "rede credenciada"
+    transformation: "lookup"
+    quality_rules: []
+  - name: id_especialidade_principal
+    type: bigint
+    nullable: true
+    required_for: [provider]
+    classification: internal
+    description: "Especialidade principal — define o grupo de PARES para detecção de anomalia (z-score)."
+    example: 8
+    typical_source: "rede credenciada"
+    transformation: "lookup especialidade.codigo -> id"
+    quality_rules: []
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]

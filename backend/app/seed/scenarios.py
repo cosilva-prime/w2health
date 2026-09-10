@@ -388,8 +388,170 @@ def build_scenarios(
         cat_proc["id"],       # S1  CIR-CAT
         s7_proc["id"],        # S7  IMG-RM
         s8_proc["id"],        # S8  FIS-SES
+        pidx["CIR-COL"]["id"],  # S18 — colecistectomia só via hook (cohort pontual limpo)
     }
     blocked_prestador_ids: set[int] = {prov_x_id}  # S3 — só recebe eventos do hook
+
+    # ================================================== S14-S19 — CONTRATO COMO UNIDADE
+    # Cenários de Contract Intelligence (v1.2). Cada hook injeta eventos em beneficiários
+    # de UM contrato específico. Não dependem de receita por contrato.
+    # RNG DEDICADO (srng) — os hooks S14-S19 NÃO consomem o stream principal `ctx["rng"]`,
+    # portanto a geração orgânica e os cenários S1-S13 permanecem byte-idênticos.
+    srng = np.random.default_rng(cfg.seed + 1414)
+
+    def _ctr(plano_idx: int, contrato_idx: int) -> int:
+        ids = cat.contrato_por_plano[cat.plano_ids[plano_idx]]
+        return int(ids[min(contrato_idx, len(ids) - 1)])
+
+    def _ativos_do_contrato(ctx: dict, ids_benef: np.ndarray) -> np.ndarray:
+        """Posições (em cart.ids) do cohort que estão ativas no mês."""
+        return _active_positions(ctx, ids_benef)
+
+    s14_ctr, s15_ctr = _ctr(3, 2), _ctr(6, 2)     # HOSP-E-PME / COMP-E-PME — "PME Média"
+    s16_ctr = _ctr(1, 3)                            # AMB-E-PME — "PME Grande" (estável)
+    s17_ctr = _ctr(9, 2)                            # COMP-A-PME — "PME Média"
+    s18_ctr = _ctr(6, 1)                            # COMP-E-PME — "PME Pequena"
+    s19_ctr = _ctr(1, 1)                            # AMB-E-PME — "PME Pequena" (poucas vidas)
+
+    s14_cohort = cohort((cart.contrato_id == s14_ctr) & (idade0 >= 30), nround(6 * k))
+    s15_cohort = cohort(cart.contrato_id == s15_ctr, nround(320 * k))
+    s16_cohort = cohort((cart.contrato_id == s16_ctr) & (idade0 >= 30), max(nround(2 * k), 1))
+    s17_cohort = cohort((cart.contrato_id == s17_ctr) & (idade0 >= 18), nround(45 * k))
+    s18_cohort = cohort((cart.contrato_id == s18_ctr) & (idade0 >= 25), nround(8 * k))
+    s19_cohort = cohort(cart.contrato_id == s19_ctr, 3)
+
+    # Procedimentos de alto custo tipo TERAPIA (nunca 'internacao' — não poluir o
+    # agregado de tipo_atendimento usado pelos cenários S1-S13).
+    _alto = [pidx["ONC-RXT"], pidx["IMB-INF"], pidx["ONC-QT2"]]
+    _recor = [pidx["TO-SES"], pidx["FON-SES"]]  # terapias recorrentes não usadas por outros cenários
+
+    def _emit(t, bp, pr, tipo, tag, *, custo_mult=1.0, qtd=1):
+        prov = _prov_pick(cat, pr["slug"], int(srng.integers(0, 999)))
+        return new_event_row(
+            t=t, rng=srng, id_beneficiario=int(cart.ids[bp]),
+            id_prestador=prov[0], id_procedimento=pr["id"], id_especialidade=pr["espec_id"],
+            id_regiao=int(cart.regiao_id[bp]), tipo_atendimento=tipo, custo=pr["custo"],
+            nivel_preco=prov[2], fator_custo=custo_mult, quantidade=qtd, cenario_tag=tag,
+        )
+
+    def hook_s14(ctx: dict) -> list[dict]:
+        if ctx["t"] != date(2026, 8, 1):
+            return []
+        pos = _ativos_do_contrato(ctx, s14_cohort)
+        rows = []
+        for bp in pos:
+            pr = _alto[int(srng.integers(0, len(_alto)))]
+            rows.append(_emit(ctx["t"], bp, pr, "terapia", "s14_contrato_concentracao",
+                              custo_mult=2.4, qtd=int(srng.integers(1, 3))))
+        return rows
+
+    def hook_s15(ctx: dict) -> list[dict]:
+        # Aumento de despesa DISTRIBUÍDO: quase todo o contrato ganha 2-3 exames de
+        # imagem de custo médio — o Δ do contrato sobe, mas sem concentração.
+        if ctx["t"] != date(2026, 8, 1):
+            return []
+        pos = _ativos_do_contrato(ctx, s15_cohort)
+        rows = []
+        for bp in pos:
+            rows.append(_emit(ctx["t"], bp, pidx["IMG-USG"], "exame", "s15_contrato_homogeneo",
+                              custo_mult=1.3))
+            rows.append(_emit(ctx["t"], bp, pidx["IMG-TC"], "exame", "s15_contrato_homogeneo",
+                              custo_mult=1.3))
+            if srng.random() < 0.5:
+                rows.append(_emit(ctx["t"], bp, pidx["CON-CLM"], "consulta", "s15_contrato_homogeneo"))
+        return rows
+
+    def hook_s16(ctx: dict) -> list[dict]:
+        if not (date(2026, 9, 1) <= ctx["t"] <= date(2026, 11, 1)):
+            return []
+        pos = _ativos_do_contrato(ctx, s16_cohort)
+        return [_emit(ctx["t"], bp, pidx["ONC-QT1"], "terapia", "s16_contrato_novo_alto_custo",
+                      custo_mult=2.6, qtd=int(srng.integers(2, 5))) for bp in pos]
+
+    def hook_s17(ctx: dict) -> list[dict]:
+        if ctx["t"] < date(2026, 7, 1):
+            return []
+        pos = _ativos_do_contrato(ctx, s17_cohort)
+        meses = (ctx["t"].year - 2026) * 12 + (ctx["t"].month - 7)
+        rows = []
+        for bp in pos:
+            for _ in range(int(srng.integers(3, 6)) + max(0, meses // 2)):
+                pr = _recor[int(srng.integers(0, len(_recor)))]
+                rows.append(_emit(ctx["t"], bp, pr, "terapia", "s17_contrato_recorrente"))
+        return rows
+
+    def hook_s18(ctx: dict) -> list[dict]:
+        if ctx["t"] != date(2026, 11, 1):
+            return []
+        pos = _ativos_do_contrato(ctx, s18_cohort)
+        return [_emit(ctx["t"], bp, pidx["CIR-COL"], "cirurgia", "s18_contrato_evento_pontual",
+                      custo_mult=1.1) for bp in pos]
+
+    def hook_s19(ctx: dict) -> list[dict]:
+        if ctx["t"] != date(2026, 8, 1):
+            return []
+        pos = _ativos_do_contrato(ctx, s19_cohort)
+        rows = []
+        for bp in pos:
+            for pr in _alto:
+                rows.append(_emit(ctx["t"], bp, pr, "terapia",
+                                  "s19_contrato_concentracao_extrema", custo_mult=3.6,
+                                  qtd=int(srng.integers(2, 4))))
+        return rows
+
+    hooks.extend([hook_s14, hook_s15, hook_s16, hook_s17, hook_s18, hook_s19])
+    gaba.extend([
+        CenarioGabarito(
+            codigo="s14_contrato_concentracao", nome="Contrato: poucos beneficiários elevam a despesa",
+            competencia_alvo=date(2026, 8, 1), dimensao="contrato", chave_alvo=str(s14_ctr),
+            efeito_esperado="concentracao_contrato",
+            descricao="Ago/2026: ~6 (x k) beneficiários de um contrato PME concentram forte aumento "
+                      "da despesa líquida do contrato.",
+            params={"id_contrato": s14_ctr, "k": k, "mes": "2026-08"},
+        ),
+        CenarioGabarito(
+            codigo="s15_contrato_homogeneo", nome="Contrato: aumento distribuído de despesa",
+            competencia_alvo=date(2026, 8, 1), dimensao="contrato", chave_alvo=str(s15_ctr),
+            efeito_esperado="distribuicao_homogenea",
+            descricao="Ago/2026: aumento de despesa espalhado por grande parte dos beneficiários "
+                      "do contrato (consultas/exames) — concentração NÃO deve dominar.",
+            params={"id_contrato": s15_ctr, "k": k, "mes": "2026-08"},
+        ),
+        CenarioGabarito(
+            codigo="s16_contrato_novo_alto_custo", nome="Contrato: novo caso de alto custo",
+            competencia_alvo=date(2026, 9, 1), dimensao="contrato", chave_alvo=str(s16_ctr),
+            efeito_esperado="novo_caso_alto_custo",
+            descricao="Set/2026: surge 1-2 beneficiários de alto custo (quimioterapia) num contrato "
+                      "antes estável, sem histórico relevante de despesa.",
+            params={"id_contrato": s16_ctr, "k": k, "mes": "2026-09"},
+        ),
+        CenarioGabarito(
+            codigo="s17_contrato_recorrente", nome="Contrato: grupo recorrente aumenta utilização",
+            competencia_alvo=date(2026, 10, 1), dimensao="contrato", chave_alvo=str(s17_ctr),
+            efeito_esperado="recorrencia",
+            descricao="A partir de jul/2026, ~45 (x k) beneficiários de um contrato usam "
+                      "terapias recorrentes TODOS os meses, com frequência crescente.",
+            params={"id_contrato": s17_ctr, "k": k, "inicio": "2026-07"},
+        ),
+        CenarioGabarito(
+            codigo="s18_contrato_evento_pontual", nome="Contrato: evento pontual que não se repete",
+            competencia_alvo=date(2026, 11, 1), dimensao="procedimento",
+            chave_alvo=str(pidx["CIR-COL"]["id"]), rotulo_alvo="Colecistectomia",
+            efeito_esperado="evento_pontual",
+            descricao="Nov/2026: cohort de um contrato faz colecistectomia (perfil pontual); "
+                      "em dez/2026 não há repetição — a coorte deve classificar como HIPÓTESE de "
+                      "episódio concluído.",
+            params={"id_contrato": s18_ctr, "k": k, "mes": "2026-11"},
+        ),
+        CenarioGabarito(
+            codigo="s19_contrato_concentracao_extrema", nome="Contrato: concentração extrema",
+            competencia_alvo=date(2026, 8, 1), dimensao="contrato", chave_alvo=str(s19_ctr),
+            efeito_esperado="concentracao_extrema",
+            descricao="Ago/2026: 3 beneficiários de um contrato pequeno respondem pela maior parte "
+                      "da despesa líquida do contrato (Gini elevado).",
+            params={"id_contrato": s19_ctr, "k": k, "mes": "2026-08"},
+        ),
+    ])
 
     gaba.append(CenarioGabarito(
         codigo=S9_TAG, nome="Sinistralidade sobe por comportamento da receita",

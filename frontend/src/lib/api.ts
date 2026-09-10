@@ -128,3 +128,52 @@ export const insightHref = (i: Insight): string => {
   const s = p.toString();
   return `${i.deep_link.rota}${s ? `?${s}` : ""}`;
 };
+
+// ------------------------------------------------------------- v1.2: contratos + C1
+export interface ContratoResumo {
+  id_contrato: number;
+  nome: string;
+  tipo: string;
+  plano: string;
+  vidas: number;
+  despesa_bruta: number;
+  glosas: number;
+  coparticipacao: number;
+  despesa_liquida: number;
+  custo_pmpm: number;
+  eventos: number;
+  gini: number;
+  top5_share: number;
+  n_beneficiarios_alto_custo: number;
+  variacao_despesa_liquida_pct: number | null;
+  variacao_custo_pmpm_pct: number | null;
+}
+
+export interface ContratosLista {
+  competencia: string;
+  comparacao: string;
+  receita_disponivel: false;
+  aviso: string;
+  total: number;
+  itens: ContratoResumo[];
+}
+
+export interface ConcentracaoVariacao {
+  competencia: string;
+  comparacao: string;
+  delta_total_liquido: number;
+  delta_positivo_total: number;
+  n_beneficiarios_com_aumento: number;
+  n_para_credito_50pct: number;
+  top5_share_do_aumento: number;
+  gini_do_aumento: number;
+  top: {
+    id: number;
+    codigo: string;
+    id_contrato: number | null;
+    delta: number;
+    participacao_pct: number;
+  }[];
+  deep_link: { rota: string; params: Record<string, string> };
+  metodologia: string;
+}

@@ -192,3 +192,34 @@ cruza o limite — nunca um alerta fabricado. Indicadores cobrem beneficiário, 
 procedimento, plano e financeiro (glosa/coparticipação); `contrato` fica limitado a
 despesa/participação/vidas (sinistralidade por contrato exige receita própria, fora do
 escopo sem o módulo de reajuste — ver `EVOLUCAO_FEEDBACK_ESPECIALISTA.md`).
+**v1.2**: `avaliar_regras()` faz `session.rollback()` ao pular uma regra cujo indicador
+falha (uma regra malformada não polui a transação das demais).
+
+---
+
+## 12. v1.2 — concentração no topo, escopo de contrato, composição por dimensão
+
+Ver [V1.2.md](V1.2.md). Resumo do que mudou no motor:
+
+- **C1 — `decomposition.concentracao_variacao_beneficiarios(...)`**: Δdespesa líquida por
+  beneficiário (mês − comparação) sobre `agg_beneficiario_competencia.despesa_liquida`;
+  top-k share + Gini sobre os aumentos + "nº para crédito de 50%". Entra no retorno de
+  `explicar()` (bloco `concentracao_variacao_beneficiarios`), vira insight e endpoint.
+- **C2 — composição propagada**: `formulas.decomposicao_financeira` (já existente) agora
+  alimenta também `sinistralidade.composicao(dimensao=, chave=)` e `(contrato_id=)` — sem
+  receita nesses escopos ⇒ `sinistralidade_*`/`decomposicao` = `None` + `aviso`. Identidade
+  `bruta − glosas − copart = líquida` vale em todas as `agg_*`.
+- **C3 — `contrato_id` em `explicar` / `drill` / `cohorts.analisar_causas`**: quando
+  setado, os agregados por dimensão vêm de `eventos_assistenciais` sob demanda
+  (`analytics_repo.dimensao_mes_por_contrato` / `sinistralidade_por_contrato_mes`);
+  `impacto_pp`/`sinistralidade`/`efeito_receita` retornam `None`. `dimensao='contrato'` é
+  rejeitada nesse escopo.
+- **C4 — `app/analytics/contratos.py`**: `listar()` / `detalhe()` sobre
+  `agg_contrato_competencia`; concentração via `formulas.concentracao` sobre despesa
+  líquida por beneficiário do contrato; drivers = `explicar(..., contrato_id=)`.
+- **C5 — `beneficiaries.py`**: `recorrencia`, `novos_casos_alto_custo`,
+  `eventos_pontuais_alto_custo`, `participacao_variacao` — descritores do **observado**,
+  nunca score clínico nem previsão.
+- **C6 — `indicadores.py`**: `contrato/concentracao`, `contrato/n_beneficiarios_alto_custo`,
+  `beneficiario/novo_caso_alto_custo`, `beneficiario/recorrencia`. `alerts` deep-link
+  `contrato → /contratos/{id}`.

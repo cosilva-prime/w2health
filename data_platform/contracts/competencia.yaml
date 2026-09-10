@@ -1,0 +1,53 @@
+entity: competencia
+version: 1
+grain: "1 linha por mês de referência (1º dia do mês)"
+primary_key: [competencia]
+business_keys:
+  - [competencia]
+load_strategy: FULL
+watermark_column: null
+updated_at_column: null
+deduplication_strategy: "competencia única (calendário global — não tem tenant_id)"
+fields:
+  - name: competencia
+    type: date
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Primeiro dia do mês (AAAA-MM-01). Grão temporal de toda a análise."
+    example: "2026-07-01"
+    typical_source: "gerado (calendário), não vem do cliente"
+    transformation: "date_trunc('month', qualquer_data)"
+    quality_rules: [competencia_invalida]
+  - name: ano
+    type: int
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Ano."
+    example: 2026
+    typical_source: "derivado"
+    transformation: "extract(year from competencia)"
+    quality_rules: []
+  - name: mes
+    type: int
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Mês 1-12."
+    example: 7
+    typical_source: "derivado"
+    transformation: "extract(month from competencia)"
+    quality_rules: []
+  - name: trimestre
+    type: int
+    nullable: false
+    required_for: []
+    classification: internal
+    description: "Trimestre 1-4."
+    example: 3
+    typical_source: "derivado"
+    transformation: "ceil(mes/3)"
+    quality_rules: []
+metadata_fields: []
+notes: "Calendário global. Não recebe `tenant_id` — é o único caso além de `tenant`."

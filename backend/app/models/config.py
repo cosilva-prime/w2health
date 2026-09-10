@@ -13,13 +13,14 @@ from sqlalchemy import JSON, Boolean, DateTime, Float, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.models._mixins import TenantMixin
 
 ENTIDADES_VALIDAS = ("beneficiario", "prestador", "procedimento", "plano", "contrato", "financeiro")
 OPERADORES_VALIDOS = (">=", ">", "<=", "<", "==")
 SEVERIDADES_VALIDAS = ("critica", "atencao", "informativo")
 
 
-class RegraAlerta(Base):
+class RegraAlerta(TenantMixin, Base):
     __tablename__ = "regras_alerta"
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -1,0 +1,198 @@
+entity: evento_assistencial
+version: 1
+grain: "1 linha por atendimento/procedimento/ocorrência de um beneficiário (item de conta)"
+primary_key: [tenant_id, id_evento]
+business_keys:
+  - [tenant_id, source_system, source_record_id]
+load_strategy: INCREMENTAL_ID
+watermark_column: source_updated_at
+updated_at_column: source_updated_at
+deduplication_strategy: "business_key + raw_payload_hash; reprocessamento por lote (batch_id)"
+fields:
+  - name: tenant_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Cliente."
+    example: "operadora-alfa"
+    typical_source: "constante do conector"
+    transformation: "literal"
+    quality_rules: [tenant_id_ausente]
+  - name: id_evento
+    type: bigint
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Surrogate key do W2Health."
+    example: 88123901
+    typical_source: "gerado a partir da business key"
+    transformation: "surrogate"
+    quality_rules: []
+  - name: source_record_id
+    type: string
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "Identificador do item na origem (nº da conta + item, nº da autorização, etc.)."
+    example: "CTA-2026-7788/03"
+    typical_source: "contas médicas / TISS"
+    transformation: "concat dos identificadores de origem"
+    quality_rules: [evento_duplicado]
+  - name: id_beneficiario
+    type: bigint
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "FK beneficiário."
+    example: 84213
+    typical_source: "conta / autorização"
+    transformation: "lookup por codigo do beneficiário"
+    quality_rules: [benef_inexistente_em_evento]
+  - name: id_contrato
+    type: bigint
+    nullable: true
+    required_for: [contract]
+    classification: internal
+    description: "FK contrato (normalmente derivada do beneficiário na data do evento)."
+    example: 45
+    typical_source: "derivado de beneficiário × vigência"
+    transformation: "lookup beneficiário.id_contrato (ou histórico de vínculo, se disponível)"
+    quality_rules: [contrato_inexistente]
+  - name: id_prestador
+    type: bigint
+    nullable: false
+    required_for: [provider]
+    classification: internal
+    description: "FK prestador executante."
+    example: 3110
+    typical_source: "conta"
+    transformation: "lookup por codigo do prestador"
+    quality_rules: [prestador_inexistente]
+  - name: id_procedimento
+    type: bigint
+    nullable: false
+    required_for: [loss_ratio]
+    classification: internal
+    description: "FK procedimento."
+    example: 1162
+    typical_source: "conta (código TUSS/CBHPM)"
+    transformation: "lookup por codigo do procedimento"
+    quality_rules: []
+  - name: id_especialidade
+    type: bigint
+    nullable: true
+    required_for: [loss_ratio]
+    classification: internal
+    description: "FK especialidade do atendimento."
+    example: 5
+    typical_source: "conta / derivado do procedimento"
+    transformation: "coalesce(conta, procedimento.id_especialidade)"
+    quality_rules: []
+  - name: id_diagnostico
+    type: bigint
+    nullable: true
+    required_for: []
+    classification: phi
+    description: "FK diagnóstico (CID). Dado de saúde sensível."
+    example: 77
+    typical_source: "conta / autorização / laudo"
+    transformation: "lookup por CID"
+    quality_rules: []
+  - name: data_evento
+    type: date
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "Data do atendimento."
+    example: "2026-07-14"
+    typical_source: "conta"
+    transformation: "-"
+    quality_rules: [evento_sem_data]
+  - name: competencia
+    type: date
+    nullable: false
+    required_for: [ALL]
+    classification: internal
+    description: "Mês de referência (1º dia). Pode ser competência de pagamento OU de atendimento — DECISÃO por cliente, documentar."
+    example: "2026-07-01"
+    typical_source: "derivado ou campo da conta"
+    transformation: "date_trunc('month', data_referencia_acordada)"
+    quality_rules: [competencia_invalida]
+  - name: tipo_atendimento
+    type: string
+    nullable: false
+    required_for: [loss_ratio]
+    classification: operational
+    description: "consulta | exame | terapia | pronto_socorro | internacao | cirurgia | opme."
+    example: "cirurgia"
+    typical_source: "conta / regra de negócio"
+    transformation: "mapear tipo de guia/conta -> vocabulário canônico"
+    quality_rules: []
+  - name: quantidade
+    type: int
+    nullable: false
+    required_for: []
+    classification: operational
+    description: "Quantidade do item (sessões, diárias...)."
+    example: 1
+    typical_source: "conta"
+    transformation: "-"
+    quality_rules: []
+  - name: valor_apresentado
+    type: numeric
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "Despesa BRUTA apresentada pelo prestador."
+    example: 4200.00
+    typical_source: "conta médica"
+    transformation: "-"
+    quality_rules: [valor_negativo]
+  - name: valor_glosado
+    type: numeric
+    nullable: false
+    required_for: [explicacao_glosa]
+    classification: operational
+    description: "Parcela glosada (não paga ao prestador)."
+    example: 180.00
+    typical_source: "processamento de contas / auditoria"
+    transformation: "-"
+    quality_rules: [valor_negativo, glosa_maior_que_apresentado]
+  - name: valor_coparticipacao
+    type: numeric
+    nullable: false
+    required_for: [explicacao_coparticipacao]
+    classification: operational
+    description: "Parcela de valor_pago cobrada do beneficiário. 0 quando não há coparticipação."
+    example: 0.00
+    typical_source: "faturamento / regra do plano"
+    transformation: "coalesce(campo da conta, valor_pago * plano.percentual_coparticipacao quando elegível)"
+    quality_rules: [coparticipacao_acima_permitido]
+  - name: valor_pago
+    type: numeric
+    nullable: false
+    required_for: [ALL]
+    classification: operational
+    description: "valor_apresentado - valor_glosado (pago ao prestador)."
+    example: 4020.00
+    typical_source: "conta"
+    transformation: "coalesce(campo da conta, valor_apresentado - valor_glosado)"
+    quality_rules: [valor_negativo]
+  - name: despesa_liquida
+    type: numeric
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "DERIVADA: valor_apresentado - valor_glosado - valor_coparticipacao. Calculada na Gold; não precisa vir da origem."
+    example: 4020.00
+    typical_source: "derivado"
+    transformation: "valor_apresentado - valor_glosado - valor_coparticipacao"
+    quality_rules: [despesa_liquida_inconsistente]
+metadata_fields: [tenant_id, source_system, source_entity, source_record_id, ingestion_id,
+                  ingestion_timestamp, source_updated_at, reference_date, raw_payload_hash]
+notes: >
+  Entidade mais volumosa. Glosas que chegam DEPOIS (reprocessamento) e reversões de glosa
+  são tratadas por UPSERT na business key + reprocesso do lote — ver
+  docs/INTEGRATION_GUIDE.md § Histórico. `competencia` de atendimento vs. de pagamento é
+  uma decisão de onboarding que muda o resultado e precisa ficar registrada por cliente.

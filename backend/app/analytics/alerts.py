@@ -30,7 +30,7 @@ _DEEP_LINK_ROTA = {
     "prestador": "/prestadores/{id}",
     "procedimento": "/sinistralidade",
     "plano": "/sinistralidade",
-    "contrato": "/sinistralidade",
+    "contrato": "/contratos/{id}",  # v1.2 — Contract Intelligence
     "financeiro": "/sinistralidade",
 }
 
@@ -94,6 +94,7 @@ def avaliar_regras(session: Session, competencia: date, comparacao: str = "mes_a
         try:
             valores = definicao.funcao(session, competencia, comparacao, regra.escopo or {})
         except Exception:  # noqa: BLE001 - uma regra malformada não derruba as demais
+            session.rollback()  # evita poluir a transação para as regras seguintes
             continue
         for v in valores:
             if op(v["valor"], regra.limite):

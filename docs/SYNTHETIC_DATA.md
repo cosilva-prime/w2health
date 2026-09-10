@@ -14,8 +14,14 @@ Gerador: `backend/app/seed/`. CLI: `python -m app.seed.run`.
 | `--no-cenarios` | — | gera a base sem os cenários intencionais |
 
 Volume default: ~20 mil beneficiários, ~120 prestadores, 85 procedimentos, 15
-especialidades, 12 planos, 12 contratos, ~40 diagnósticos, **~320 mil eventos**, 24 meses.
-Tempo: ~35–65 s (COPY + agregação no Postgres). Grava `seed_manifest` e `cenarios_gabarito`.
+especialidades, 12 planos, **48 contratos** (v1.2 — vários por plano, ~60 a ~4.900
+vidas-alvo), ~40 diagnósticos, **~330 mil eventos**, 24 meses.
+Tempo: ~60–90 s. Grava `seed_manifest` e `cenarios_gabarito`. **v1.2**: toda linha é
+carimbada com `SeedConfig.tenant_id` (default `w2h-demo`); `run.py` faz upsert em `tenants`.
+
+`--tenant`? não existe flag — passar `SeedConfig(tenant_id=...)` para gerar um 2º tenant
+sintético. A escolha de **plano** do beneficiário NÃO mudou na v1.2 (RNG dedicado
+`seed+909` para a escolha de contrato) ⇒ os cenários S1–S13 permanecem byte-idênticos.
 
 ## Pipeline (`run.py`)
 
@@ -76,6 +82,20 @@ plantado dominar o agregado.
 | 11 | `s11_coparticipacao_aumenta` *(v1.1)* | Mai/2026: percentual de coparticipação sobe ~3,6× | `coparticipacao` | 2026-05 |
 | 12 | `s12_glosa_copart_combinado` *(v1.1)* | Out/2026: glosa e coparticipação sobem juntas (~2,2× cada) | `misto_financeiro` | 2026-10 |
 | 13 | `s13_receita_cai_mais` *(v1.1)* | Dez/2026: despesa líquida cai, mas um ajuste pontual de receita (−15%) faz a sinistralidade **piorar** | `receita` | 2026-12 |
+
+**v1.2 — cenários S14–S19 (Contract Intelligence).** 6 hooks que injetam eventos em
+beneficiários de UM contrato específico (`cart.contrato_id`), com RNG dedicado
+(`seed+1414`) — não perturbam o stream principal nem os cenários S1–S13. Não dependem de
+receita por contrato.
+
+| # | Código | Alvo | `efeito_esperado` | Competência |
+|---|---|---|---|---|
+| 14 | `s14_contrato_concentracao` | poucos benef. elevam a despesa do contrato | `concentracao_contrato` | 2026-08 |
+| 15 | `s15_contrato_homogeneo` | aumento distribuído (exames de imagem em ~muitos) | `distribuicao_homogenea` | 2026-08 |
+| 16 | `s16_contrato_novo_alto_custo` | 1 novo caso de alto custo em contrato estável | `novo_caso_alto_custo` | 2026-09 |
+| 17 | `s17_contrato_recorrente` | grupo com terapias recorrentes, freq. crescente | `recorrencia` | 2026-07→12 |
+| 18 | `s18_contrato_evento_pontual` | colecistectomia (perfil pontual) que não se repete | `evento_pontual` | 2026-11 |
+| 19 | `s19_contrato_concentracao_extrema` | 3 benef. ≈ toda a despesa do contrato (Gini→1) | `concentracao_extrema` | 2026-08 |
 
 Os 4 cenários financeiros (10–13) atuam via multiplicadores de mês (`glosa_mult_por_mes`,
 `copart_mult_por_mes`, `receita_ajuste_pontual` em `generator.py`/`scenarios.py`), não

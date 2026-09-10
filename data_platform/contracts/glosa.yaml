@@ -1,0 +1,37 @@
+entity: glosa
+version: 1
+kind: componente_derivado          # NÃO é tabela própria — é a decomposição de evento_assistencial
+grain: "atributo do evento_assistencial (valor_glosado) + eventual detalhe de motivo"
+primary_key: [tenant_id, id_evento]
+business_keys:
+  - [tenant_id, source_system, source_record_id]
+load_strategy: "acompanha evento_assistencial (UPSERT na mesma business key)"
+watermark_column: source_updated_at
+updated_at_column: source_updated_at
+deduplication_strategy: "mesma do evento; glosa tardia/reversão = UPSERT + reprocesso de lote"
+fields:
+  - name: valor_glosado
+    type: numeric
+    nullable: false
+    required_for: [explicacao_glosa]
+    classification: operational
+    description: "Parcela do valor_apresentado glosada pela operadora. 0 se não houver glosa."
+    example: 180.00
+    typical_source: "processamento de contas / auditoria médica"
+    transformation: "coalesce(campo da conta, 0)"
+    quality_rules: [valor_negativo, glosa_maior_que_apresentado]
+  - name: motivo_glosa
+    type: string
+    nullable: true
+    required_for: []
+    classification: operational
+    description: "Código/descrição do motivo (RECOMENDADO — habilita 'explicação por motivo de glosa', fora do escopo v1.2)."
+    example: "tabela/pacote divergente"
+    typical_source: "auditoria"
+    transformation: "normalizar vocabulário"
+    quality_rules: []
+metadata_fields: []
+notes: >
+  A glosa entra no W2Health como `eventos_assistenciais.valor_glosado`. A decomposição
+  bruta → glosas → líquida acontece na Gold (agg_*). Reversão de glosa: reprocessar o
+  evento com o novo `valor_glosado` (a business key não muda).

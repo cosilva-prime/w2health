@@ -10,6 +10,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Visão Executiva", etapa: 6 },
   { href: "/sinistralidade", label: "Sinistralidade", etapa: 6 },
+  { href: "/contratos", label: "Contratos", etapa: 12 },
   { href: "/prestadores", label: "Prestadores", etapa: 7 },
   { href: "/beneficiarios", label: "Beneficiários", etapa: 8 },
   { href: "/insights", label: "Insights", etapa: 9 },

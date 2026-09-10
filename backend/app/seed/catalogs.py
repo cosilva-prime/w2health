@@ -158,21 +158,51 @@ PLANOS: list[tuple[str, str, str, float, bool, float]] = [
     ("PREM-A-EMP", "Premium Apartamento Empresarial", "completo", 780, False, 0.0),
 ]
 
-# Contratos (codigo_plano, nome_contrato, tipo)
-CONTRATOS: list[tuple[str, str, str]] = [
-    ("AMB-E-PF", "Adesão Individual Essencial", "PF"),
-    ("AMB-E-PME", "Coletivo por Adesão - Conselhos", "PME"),
-    ("HOSP-E-PF", "Individual Enfermaria", "PF"),
-    ("HOSP-E-PME", "PME Comércio & Serviços", "PME"),
-    ("HOSP-E-EMP", "Empresarial Indústria Metalúrgica", "Empresarial"),
-    ("COMP-E-PF", "Individual Completo Enfermaria", "PF"),
-    ("COMP-E-PME", "PME Tecnologia", "PME"),
-    ("COMP-E-EMP", "Empresarial Varejo Nacional", "Empresarial"),
-    ("COMP-A-PF", "Individual Completo Apartamento", "PF"),
-    ("COMP-A-PME", "PME Escritórios de Advocacia", "PME"),
-    ("COMP-A-EMP", "Empresarial Serviços Financeiros", "Empresarial"),
-    ("PREM-A-EMP", "Empresarial Premium - Executivos", "Empresarial"),
-]
+# Contratos (codigo_plano, nome_contrato, tipo, vidas_alvo)
+# v1.2 — vários contratos por plano, tamanhos distintos (de ~60 a ~5.000 vidas-alvo).
+# O `vidas_alvo` só orienta a distribuição da massa sintética dentro do plano; um cliente
+# real não precisa fornecê-lo. 48 contratos ao todo (planos PF: 5 cada; PME: 4; EMP: 3).
+def _build_contratos() -> list[tuple[str, str, str, int]]:
+    familias = {
+        "PF": (
+            "PF",
+            [
+                ("Individual", "", 70),
+                ("Individual Plus", "", 130),
+                ("Familiar", "", 240),
+                ("Adesão Regional", "", 420),
+                ("Adesão Nacional", "", 950),
+            ],
+        ),
+        "PME": (
+            "PME",
+            [
+                ("PME Micro", "Comércio", 60),
+                ("PME Pequena", "Serviços", 230),
+                ("PME Média", "Indústria", 640),
+                ("PME Grande", "Tecnologia", 1180),
+            ],
+        ),
+        "EMP": (
+            "Empresarial",
+            [
+                ("Empresarial Regional", "Serviços", 360),
+                ("Empresarial Nacional", "Indústria", 1650),
+                ("Empresarial Corporativo", "Serviços Financeiros", 4900),
+            ],
+        ),
+    }
+    out: list[tuple[str, str, str, int]] = []
+    for cod, _nome, seg, _tk, _cp, _cpp in PLANOS:
+        fam = "EMP" if cod.endswith("-EMP") else "PME" if cod.endswith("-PME") else "PF"
+        tipo, perfis = familias[fam]
+        for base, setor, vidas in perfis:
+            rot = f"{base} {setor}".strip()
+            out.append((cod, f"{rot} · {cod}", tipo, vidas))
+    return out
+
+
+CONTRATOS: list[tuple[str, str, str, int]] = _build_contratos()
 
 # --------------------------------------------------------------------------------------
 # Regiões (cidade, uf, macrorregiao) e pesos de distribuição da carteira

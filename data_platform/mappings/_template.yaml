@@ -1,0 +1,33 @@
+# TEMPLATE de mapping de integração — SOURCE MODEL -> W2HEALTH CANONICAL MODEL
+#
+# Um arquivo por (tenant, source_system, source_entity). O conector lê a origem, aplica
+# este mapping e produz linhas do contrato canônico correspondente (data_platform/contracts).
+# NENHUM nome de tabela/coluna de fornecedor aparece fora deste arquivo.
+#
+# Preencher durante o discovery do cliente. Ver docs/SOURCE_MAPPING_TEMPLATE.md.
+
+source_system: "<rótulo livre — ex.: erp_faturamento, assistencial_a, arquivos_tiss>"
+source_entity: "<nome da entidade/tabela/arquivo na origem>"
+target_entity: "<uma de: beneficiario | plano | contrato | prestador | especialidade |"
+target_entity_options: "  procedimento | evento_assistencial | receita | receita_contrato>"
+
+load:
+  strategy: "FULL | INCREMENTAL_DATA | INCREMENTAL_ID | CDC | UPSERT"
+  business_key: ["<colunas da origem que identificam a linha>"]
+  watermark_column: "<coluna monotônica na origem, ou null>"
+  updated_at_column: "<coluna de última alteração na origem, ou null>"
+  deduplication_strategy: "<texto>"
+
+# Uma entrada por campo do contrato canônico que este mapping preenche.
+fields:
+  - target_field: "<campo canônico>"
+    source_field: "<campo da origem>"          # ou null se vier de default/transformation
+    transformation: "<expressão/regra: cast, trim, lookup, coalesce, date_trunc...>"
+    required: true|false                         # espelha o contrato canônico
+    default_value: "<valor quando source_field ausente/nulo>"
+    quality_rule: "<rule_id de data_platform/quality/rules.py, opcional>"
+
+# Constantes injetadas em toda linha (tipicamente tenant_id e metadados de origem).
+constants:
+  tenant_id: "<slug do tenant>"
+  source_system: "<= source_system acima>"

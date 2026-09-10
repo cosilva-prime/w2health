@@ -1,0 +1,71 @@
+# EXEMPLO ilustrativo — nomes de origem GENÉRICOS e fictícios (não correspondem a MV,
+# Tasy, Benner ou qualquer produto real). Mostra o formato preenchido para uma entidade.
+
+source_system: "assistencial_generico"
+source_entity: "atendimento_item"
+target_entity: "evento_assistencial"
+
+load:
+  strategy: "INCREMENTAL_ID"
+  business_key: ["nr_conta", "nr_item"]
+  watermark_column: "dh_ultima_atualizacao"
+  updated_at_column: "dh_ultima_atualizacao"
+  deduplication_strategy: "business_key + hash do payload; reprocesso por lote"
+
+fields:
+  - target_field: "source_record_id"
+    source_field: "nr_conta"
+    transformation: "concat(nr_conta, '/', lpad(nr_item, 3, '0'))"
+    required: true
+  - target_field: "id_beneficiario"
+    source_field: "cod_carteirinha"
+    transformation: "lookup beneficiario.codigo (após pseudonimização) -> id_beneficiario"
+    required: true
+    quality_rule: "benef_inexistente_em_evento"
+  - target_field: "id_prestador"
+    source_field: "cod_prestador"
+    transformation: "lookup prestador.codigo -> id_prestador"
+    required: true
+    quality_rule: "prestador_inexistente"
+  - target_field: "id_procedimento"
+    source_field: "cod_tuss"
+    transformation: "lookup procedimento.codigo -> id_procedimento"
+    required: true
+  - target_field: "data_evento"
+    source_field: "dt_atendimento"
+    transformation: "cast date"
+    required: true
+    quality_rule: "evento_sem_data"
+  - target_field: "competencia"
+    source_field: "dt_atendimento"
+    transformation: "date_trunc('month', dt_atendimento)   # DECISÃO do cliente: competência de atendimento"
+    required: true
+    quality_rule: "competencia_invalida"
+  - target_field: "tipo_atendimento"
+    source_field: "tp_guia"
+    transformation: "mapa {1:'consulta',2:'exame',3:'internacao',4:'pronto_socorro',5:'terapia',6:'cirurgia',7:'opme'}"
+    required: true
+  - target_field: "valor_apresentado"
+    source_field: "vl_apresentado"
+    transformation: "cast numeric"
+    required: true
+    quality_rule: "valor_negativo"
+  - target_field: "valor_glosado"
+    source_field: "vl_glosa"
+    transformation: "coalesce(cast numeric, 0)"
+    required: false
+    default_value: "0"
+    quality_rule: "glosa_maior_que_apresentado"
+  - target_field: "valor_pago"
+    source_field: "vl_liberado"
+    transformation: "coalesce(vl_liberado, vl_apresentado - coalesce(vl_glosa,0))"
+    required: true
+  - target_field: "valor_coparticipacao"
+    source_field: null
+    transformation: "0   # origem não traz; será derivada na Gold pela regra do plano"
+    required: false
+    default_value: "0"
+
+constants:
+  tenant_id: "operadora-alfa"
+  source_system: "assistencial_generico"
