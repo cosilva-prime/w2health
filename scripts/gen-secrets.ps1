@@ -10,8 +10,10 @@ $py = if (Test-Path "backend/.venv/Scripts/python.exe") { "backend/.venv/Scripts
 $jwt = & $py -c "import secrets;print(secrets.token_urlsafe(48))"
 $fernet = & $py -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
 $appdb = & $py -c "import secrets;print(secrets.token_urlsafe(18))"
+$pipedb = & $py -c "import secrets;print(secrets.token_urlsafe(18))"
 (Get-Content ".env.example") `
     -replace '^APP_DB_PASSWORD=.*$', "APP_DB_PASSWORD=$appdb" `
+    -replace '^PIPELINE_DB_PASSWORD=.*$', "PIPELINE_DB_PASSWORD=$pipedb" `
     -replace '^JWT_SECRET_KEY=.*$', "JWT_SECRET_KEY=$jwt" `
     -replace '^DATA_ENCRYPTION_KEY=.*$', "DATA_ENCRYPTION_KEY=$fernet" |
     Set-Content -Encoding utf8 ".env"

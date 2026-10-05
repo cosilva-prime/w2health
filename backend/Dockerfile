@@ -14,12 +14,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Camada de dependências (cacheável)
-COPY requirements.txt ./
+# Contexto de build = RAIZ do repositório (Fase 2): a imagem embarca a Data Platform
+# (contratos, mappings, regras de qualidade) em /data_platform — fonte de verdade lida
+# pelo pipeline em tempo de execução.
+COPY backend/requirements.txt ./
 RUN pip install -r requirements.txt
 
 # Código
-COPY . .
+COPY backend/ .
+COPY data_platform/ /data_platform/
+
+# RAW local (DEV) — fora de qualquer diretório servido; em produção, object storage.
+RUN mkdir -p /var/lib/w2health/raw
 
 EXPOSE 8000
 

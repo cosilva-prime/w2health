@@ -1,0 +1,13 @@
+# Contexto de build do BACKEND = raiz do repo (o frontend tem contexto próprio).
+.git
+**/.env
+**/.venv
+**/node_modules
+frontend
+docs
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+backend/var
+var
+*.zip
