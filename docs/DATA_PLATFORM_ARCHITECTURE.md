@@ -1,8 +1,11 @@
-# Arquitetura da Data Platform — W2Health (v1.2)
+# Arquitetura da Data Platform — W2Health (v1.2 → Fase 2)
 
-> **Estado atual:** definição arquitetural + contratos + SQL de referência. **Nenhum
-> pipeline roda**, nenhum conector real existe. Este documento é o alvo para quando a
-> integração com um cliente real começar.
+> **Estado atual (Fase 2):** o caminho de **arquivo** roda de ponta a ponta —
+> fonte cadastrada → RAW (filesystem local, abstração para object storage) → mapping YAML →
+> Data Quality (gate) → Silver (tabelas canônicas com linhagem) → Gold (`agg_*`) →
+> reconciliação → serving → mesmos endpoints. O gerador sintético é registrado como fonte
+> (Caminho A). **Não existem** conectores de banco/API nem orquestrador agendado.
+> Visão operacional e diagramas: [PHASE2_DATA_PLATFORM.md](PHASE2_DATA_PLATFORM.md).
 
 ## 1. Duas plataformas, responsabilidades separadas
 
@@ -10,11 +13,12 @@
 |---|---|---|
 | Responsável por | ingestão, dado bruto, histórico, padronização, qualidade, transformação, dados analíticos, **segregação por cliente**, rastreabilidade | API FastAPI, frontend, configuração, regras de alerta, (futuro) usuários/preferências, execução das consultas analíticas, **serving** |
 | Persistência | Object Storage (data lake) + engine de transformação + warehouse/serving | PostgreSQL (aplicação + serving + configuração) |
-| Estado na v1.2 | contratos + SQL de referência (`data_platform/`), tabelas de controle vazias | **funcionando** — é o produto atual |
+| Estado na Fase 2 | **pipeline de arquivo funcionando** (`backend/app/data_platform/`), mappings versionados (`data_platform/mappings/`), tabelas de controle populadas (fontes, ingestões, RAW, DQ, reconciliação, readiness, onboarding) | **funcionando** — é o produto atual |
 
 **O PostgreSQL da aplicação NÃO é o repositório bruto definitivo.** Ele é, hoje:
-banco da aplicação + banco de serving analítico (`agg_*`) + banco de configuração
-(`regras_alerta`). O histórico bruto e a integração vivem no data lake.
+banco da aplicação + Silver canônica + serving analítico (`agg_*`) + configuração +
+metadados de ingestão. O payload bruto fica no RAW storage (hoje filesystem local/volume
+Docker; em produção, object storage) — ver [RAW_STORAGE.md](RAW_STORAGE.md).
 
 ## 2. Camadas lógicas (cloud-agnostic)
 
@@ -116,8 +120,15 @@ rodando sobre `silver.*`. `sql/serving/*` documenta o contrato de serving: a API
 5 tabelas `agg_*` (+ `eventos_assistenciais` no detalhe/escopo de contrato). O serving
 pode migrar de tecnologia sem alterar a API/frontend.
 
-## 8. O que a v1.2 NÃO faz
+## 8. O que existe e o que NÃO existe (Fase 2)
 
-Não escolhe cloud, não roda orquestrador, não constrói conector (RLS no serving foi implementado na Fundação SaaS V1 — ver SECURITY_AND_TENANT_ISOLATION.md),
-não usa Kafka/streaming/Data Mesh. É a fundação para o **primeiro** cliente, não uma
-plataforma de Big Data para milhares.
+| Existe | Não existe (de propósito) |
+|---|---|
+| Ingestão de arquivo CSV com validação, RAW imutável, mapping declarativo, DQ com gate, Silver com linhagem, Gold, reconciliação, readiness, onboarding, upload controlado no Admin, CLI | conectores MV/Tasy/Benner/Datasul ou qualquer sistema real |
+| Papel de banco `w2health_pipeline` sob RLS; tenant explícito em toda execução | orquestrador (Airflow/ADF/Dagster), Spark, Kafka/streaming, Data Mesh, K8s |
+| Abstração de RAW storage (filesystem local) e de segredos | adapter S3/ADLS/GCS/MinIO; cofre de nuvem |
+| Silver = tabelas canônicas do PostgreSQL | Silver em arquivo colunar no lake |
+
+Os SQLs de referência em `data_platform/sql/` continuam como documentação do contrato; a
+Gold executada é `app.seed.aggregate.rebuild_aggregations` (mesma função para os dois
+caminhos), restrita à janela de dados do tenant. A escolha de cloud segue em aberto.

@@ -1,7 +1,9 @@
-# Guia de Integração — W2Health (v1.2)
+# Guia de Integração — W2Health (v1.2 → Fase 2)
 
-Como escrever um conector futuro. **Nenhum conector existe na v1.2** — este é o contrato
-que qualquer integração (MV, Tasy, Benner, TISS, ERP, arquivos, API, SQL) deverá cumprir.
+Como escrever um conector. Desde a Fase 2 existe **um** caminho executável — fonte `FILE`
+(pacote CSV) — que é a implementação de referência deste contrato (§Fase 2, no fim).
+Nenhum conector de sistema específico (MV, Tasy, Benner, Datasul, TISS) existe; este é o
+contrato que qualquer integração (arquivos, API, SQL) deverá cumprir.
 
 ## 1. O contrato
 
@@ -79,3 +81,24 @@ Não referenciar nomes de tabela/coluna de fornecedor fora do mapping. Não usar
 como chave. Não promover PII/PHI a Silver além do necessário. Não assumir que "receita por
 beneficiário" existe — ela **não existe** como dado direto (ver
 `docs/DISCOVERY_GESTAO_SAUDE.md`).
+
+## Fase 2 — implementação de referência (fonte FILE)
+
+| Passo do contrato | Onde está implementado |
+|---|---|
+| Cadastro da fonte (sem credencial em claro) | `app/data_platform/connections.py` + Admin → Integrações |
+| Tenant explícito, papel próprio | `PipelineContext` + `PipelineSession` (`w2health_pipeline`) |
+| RAW com metadados e hash | `storage.py` + `raw_objects` (sha256, linhas) |
+| Mapping SOURCE → canônico | `mapping.py` + `data_platform/mappings/*.yaml` |
+| Data Quality antes de promover | `quality.py` (gate) |
+| Silver / Gold | `silver.py` (UPSERT dimensões, snapshot por competência dos fatos) + `rebuild_aggregations` |
+| Reconciliação | `reconciliation.py` |
+| Idempotência | checksum do pacote (`ingestion_runs.checksum`, `duplicate_of`) — substitui o `raw_payload_hash` por linha descrito acima, que fica para conectores incrementais |
+| Linhagem | colunas de linhagem em toda tabela canônica |
+
+Um conector novo (ex.: DATABASE) precisa só **produzir os mesmos arquivos lógicos por
+entidade** (ou linhas equivalentes) e chamar o mesmo fluxo: tudo a partir do mapping é
+reaproveitado. Diferenças em relação ao texto acima, nesta fase: as estratégias
+`INCREMENTAL_*`/`CDC` e `FULL` **não** estão implementadas — a carga de arquivo usa
+`UPSERT` (dimensões) e `COMPETENCIA_SNAPSHOT` (fatos). Detalhes:
+[INGESTION_FRAMEWORK.md](INGESTION_FRAMEWORK.md), [PIPELINE_ARCHITECTURE.md](PIPELINE_ARCHITECTURE.md).

@@ -82,7 +82,7 @@ Mudar papel, desativar usuário, suspender tenant ou trocar senha tem efeito ime
 
 ### 5.2 Banco — Row-Level Security (2ª camada)
 - Migration `e8b9c0d1f2a3`: `ENABLE` + `FORCE ROW LEVEL SECURITY` nas **24** tabelas do
-  data plane, política `tenant_isolation` (`USING` + `WITH CHECK`).
+  data plane (27 após a Fase 2), política `tenant_isolation` (`USING` + `WITH CHECK`).
 - O tenant chega ao banco por `set_config('app.tenant_id', <tenant>, true)` executado no
   início de **cada transação** (listener `after_begin`). `true` = local à transação → não
   vaza entre requisições que reutilizam a conexão do pool (testado).
@@ -128,7 +128,10 @@ Detalhe em [FEATURE_CATALOG.md](FEATURE_CATALOG.md).
 | Segredo MFA | `users.mfa_secret_enc` | Fernet |
 | Chaves da aplicação | `JWT_SECRET_KEY`, `DATA_ENCRYPTION_KEY`, `APP_DB_PASSWORD` | variáveis de ambiente (`.env` gitignored); obrigatórias em produção/staging (a API não sobe sem elas) |
 
-`source_connections.config` guarda só referências (`{"secret_ref": "<chave>"}`).
+`source_connections.configuration` aceita só chaves conhecidas e não sensíveis por tipo;
+credenciais entram apenas como `secret_reference` (`tenant:<chave>` no cofre do tenant;
+`env:<NOME>` só em DEV; `vault:` reservado ao gerenciador de nuvem) — a referência nem é
+exibida pela API (só `has_secret`). Abstração: `app/core/secrets.py`.
 
 ## 9. Auditoria
 
@@ -165,14 +168,16 @@ Eventos: `auth.login`, `auth.login_failed`, `auth.login_blocked`, `auth.account_
   códigos pseudonimizados, sem CPF/CNS no produto.
 - Ainda **não** implementado (bloqueia cliente real — ver roadmap P0): TLS ponta a ponta no
   deploy, cifragem em repouso do volume, política de retenção/eliminação por tenant
-  automatizada, backup restaurável por tenant, registro de acesso a dado individual de
-  beneficiário (hoje só ações administrativas/autenticação são auditadas).
+  automatizada, backup restaurável por tenant.
+- Acesso a dado **individual** de beneficiário é auditado desde a Fase 2
+  (`data.beneficiary.*`: quem, qual beneficiário — id técnico —, quando; sem conteúdo clínico).
 
 ## 12. Backups
 
-O ambiente local usa volume Docker. Para produção: backup gerenciado com cifragem,
-retenção definida em contrato e procedimento de restauração **por tenant** (`DELETE/INSERT
-... WHERE tenant_id`) documentado e testado antes do primeiro cliente — P0.
+**Não existe backup de produção.** Existe um teste local de backup/restore (banco + RAW,
+contagens por tenant, RLS preservada) — [BACKUP_AND_RECOVERY.md](BACKUP_AND_RECOVERY.md).
+Para produção: backup gerenciado com cifragem, retenção definida em contrato e restauração
+**por tenant** automatizada e testada antes do primeiro cliente — P0.
 
 ## 13. Como verificar
 
@@ -180,3 +185,24 @@ retenção definida em contrato e procedimento de restauração **por tenant** (
 cd backend && uv run pytest tests/test_tenant_isolation.py tests/test_rls.py tests/test_auth.py \
     tests/test_mfa.py tests/test_rbac.py tests/test_features.py tests/test_admin.py tests/test_security.py
 ```
+
+## 14. Fase 2 — Data Platform
+
+| Controle | Implementação | Teste |
+|---|---|---|
+| Pipeline com tenant explícito | `PipelineContext`; tenant inexistente/suspenso → erro; não existe "todos os tenants" | `test_pipeline_sem_tenant_falha` |
+| Papel de pipeline sem privilégio | `w2health_pipeline`: NOSUPERUSER, NOBYPASSRLS, sem DDL, sem acesso a usuários/sessões/segredos; sem `DATABASE_PIPELINE_URL` o pipeline não roda (sem fallback para o dono) | `test_papel_de_pipeline_sem_privilegio_e_sob_rls` |
+| RLS nas novas tabelas | `raw_objects`, `reconciliation_results`, `capability_readiness` (total: 27 tabelas com ENABLE+FORCE) | `test_rls.py` (lista da migration = metadata) |
+| Fonte de outro tenant | id de fonte de A usado no caminho de B → recusado ("fonte inexistente", invisível por RLS); ingestões e RAW de B invisíveis no contexto de A | `test_fonte_de_outro_tenant_nao_e_utilizavel` |
+| Upload controlado | só SUPER_ADMIN; nome/extensão/tamanho/quantidade/encoding/estrutura validados; binário e path traversal recusados; conteúdo nunca executado | `test_validacao_de_arquivo_recusa_entradas_inseguras`, `test_csv_malformado_e_recusado_sem_executar` |
+| RAW | prefixo por tenant, chave validada, imutável, fora de pasta servida | `test_raw_storage_e_imutavel_e_por_tenant`, `test_raw_key_recusa_path_traversal` |
+| Segredos de fonte | nunca em `configuration`; nunca exibidos | `test_admin_integracoes_nao_exibe_segredo` |
+| Auditoria sem conteúdo clínico | carga, fonte, onboarding e leitura individual auditados só com metadados | `test_carga_e_auditada`, `test_acesso_individual_e_auditado_sem_conteudo_clinico` |
+| MFA recovery codes | 10 códigos, argon2id, uso único, regeneração invalida os anteriores, auditado sem o código, reset administrativo apaga | `test_phase2_security.py` |
+| Rate limit compartilhado | `auth_rate_limits` no banco (chave = SHA-256 do identificador/IP, nunca em claro) | `test_rate_limit_compartilhado_no_banco` |
+| Logs estruturados | JSON com `request_id`, tenant, pipeline/ingestão; chaves sensíveis `[REDACTED]` | `test_log_estruturado_com_correlacao_e_sem_segredo` |
+| Dependências | `scripts/security-check.ps1`; achados e decisões em [DEPENDENCY_SECURITY.md](DEPENDENCY_SECURITY.md) | — |
+
+Novos eventos de auditoria: `pipeline.ingestion_completed|failed|duplicate`,
+`integration.source_created|source_status|source_validated|readiness_refreshed|onboarding_decision`,
+`data.beneficiary.*`, `mfa.recovery_code_used`, `mfa.recovery_codes_generated`.

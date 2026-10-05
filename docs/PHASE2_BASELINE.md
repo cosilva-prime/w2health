@@ -9,7 +9,8 @@
 
 | Item | Resultado |
 |---|---|
-| Suíte backend (`pytest`) | **__TESTES__** |
+| Suíte backend (`pytest`) | **237 testes — 237 passed com a configuração padrão** (235 passed + 2 failed quando o `.env` local tinha `SUPER_ADMIN_REQUIRE_MFA=false`; o `conftest` passou a forçar `true`) |
+| Lint backend (`ruff check app tests`) | 17 achados pré-existentes (E731 em `analytics/decomposition.py`, B007 em `seed/catalogs.py`, imports não usados/E741/SIM300 em 4 testes antigos) — não corrigidos nesta fase para não misturar escopo; arquivos novos da Fase 2 sem achados |
 | Typecheck frontend | ✅ |
 | Docker Compose (postgres + backend + frontend) | ✅ em execução (migrations aplicadas no start) |
 | Banco local | revisão `e8b9c0d1f2a3`; tenants `w2h-demo` (328.778 eventos) e `w2h-demo-b` (81.405 eventos) — ambos do gerador sintético |

@@ -141,3 +141,35 @@ Prova objetiva:
 docker compose exec backend pytest tests/test_cohorts.py tests/test_alerts.py -q
 docker compose exec backend pytest -m scenarios -k "s10 or s11 or s12 or s13" -q
 ```
+
+## Fase 2 — Tenant alimentado por fonte externa (~6 min)
+
+**Mensagem:** o W2Health não depende do gerador sintético. A mesma operadora fictícia,
+alimentada por um pacote CSV num layout que **não** é o nosso, chega às mesmas telas —
+com qualidade, reconciliação e linhagem verificáveis.
+
+1. **Login** em `http://localhost:3000/login?tenant=vida-plena-csv` como
+   `gestor@vidaplena.example` (ou troque o "Ambiente" no cabeçalho para *Operadora Vida
+   Plena (fonte CSV)*). Visão Executiva, Sinistralidade, Contratos, Prestadores,
+   Beneficiários e Insights abrem com os dados do arquivo (18 competências, 1.000
+   beneficiários, 12.093 eventos).
+2. Botão **ⓘ** de qualquer KPI → "Fonte da última carga: Pacote CSV operadora (FILE)".
+3. Entre como **SUPER_ADMIN** → **Integrações**. Visão geral: fontes FILE e SYNTHETIC de
+   todos os tenants, última carga publicada, reconciliação, onboarding.
+4. Escolha o tenant → **Onboarding** (`CAPABILITIES_READY`; Homologar/Ativar são decisões
+   manuais com nota), **Capabilities** (contratada × dados × disponível), **Execuções** com
+   a jornada *Recebido → Validado → Processado → Reconciliado → Disponível*.
+5. **Detalhes** de uma ingestão: passos com duração, Data Quality (coberturas, avisos),
+   130 verificações de reconciliação PASS, objetos RAW com sha256.
+6. **Importação controlada**: reenvie os mesmos CSVs
+   (`data_platform/examples/generic_operator/pacote/`) → "pacote idêntico — nada a
+   reprocessar". Idempotência visível.
+7. **Lineage**: competência `2026-03` → Gold → Silver por fonte/ingestão → RAW.
+
+Para carregar do zero num tenant novo: Admin → Tenants (criar com plano) → Integrações →
+Nova fonte FILE (`generic_operator` v1) → Validar → Importação controlada. Um pacote
+diferente pode ser gerado com
+`python data_platform/examples/generic_operator/generate_package.py --out <pasta> --seed 11`.
+O tenant `homolog-csv` foi carregado exatamente assim, via API, dentro do Docker Compose.
+
+> Dados 100% sintéticos/fictícios. Nenhum layout de sistema real foi usado.

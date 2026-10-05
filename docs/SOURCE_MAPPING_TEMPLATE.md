@@ -1,8 +1,16 @@
 # Template de mapeamento de origem → canônico
 
-Como preencher um `data_platform/mappings/*.yaml` no discovery de um cliente. Um arquivo
-por `(tenant, source_system, source_entity)`. Nomes de origem abaixo são **genéricos e
-fictícios** — não correspondem a nenhum produto real.
+Como preencher um mapping no discovery de um cliente. Nomes de origem abaixo são
+**genéricos e fictícios** — não correspondem a nenhum produto real.
+
+> **Fase 2 — formato executável.** O pipeline usa **um arquivo por fonte**, com todas as
+> entidades do pacote: `data_platform/mappings/<mapping_id>_v<versão>.yaml` (ex.:
+> [`generic_operator_v1.yaml`](../data_platform/mappings/generic_operator_v1.yaml)).
+> Formato, transformações e validação: [MAPPING_FRAMEWORK.md](MAPPING_FRAMEWORK.md). O
+> formato por entidade descrito abaixo (`load.strategy`, `watermark_column`…) continua
+> como **planilha de discovery** para conectores incrementais futuros; os campos
+> `source → target` dele se transcrevem diretamente para o bloco `fields` do formato
+> executável.
 
 ## Ideia
 

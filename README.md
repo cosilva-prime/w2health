@@ -128,7 +128,21 @@ docker compose exec backend python -m app.seed.run --no-cenarios
 ```
 Reprodutível por `--seed`. O seed é **por tenant** (`--tenant`, padrão `w2h-demo`): limpa e
 recria os dados só daquele tenant e, ao final, reconstrói a
-camada analítica (`agg_*`) e grava o `seed_manifest` e o `cenarios_gabarito`.
+camada analítica (`agg_*`) e grava o `seed_manifest` e o `cenarios_gabarito`. O gerador é
+registrado como fonte `SYNTHETIC` com ingestão e linhagem (Caminho A).
+
+### Carga de uma fonte externa (Fase 2 — arquivo CSV)
+
+Pela interface: Admin → **Integrações** (SUPER_ADMIN) → fonte FILE → Importação controlada.
+Pela CLI (tenant sempre explícito; usa o papel `w2health_pipeline`):
+
+```bash
+docker compose exec backend python -m app.data_platform.cli register-source     --tenant <tenant> --name "Pacote CSV" --source-system generic_csv --mapping generic_operator --version 1
+docker compose exec backend python -m app.data_platform.cli ingest     --tenant <tenant> --source <id> --dir /data_platform/examples/generic_operator/pacote --by cli:operador
+```
+Arquitetura e operação: [docs/PHASE2_DATA_PLATFORM.md](docs/PHASE2_DATA_PLATFORM.md).
+Verificações operacionais: `scripts/security-check.ps1` (dependências) e
+`scripts/backup-restore-check.ps1` (backup/restore local — não é backup de produção).
 
 ---
 

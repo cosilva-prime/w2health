@@ -37,9 +37,11 @@ qualquer `ERROR`.
 
 ## Onde os resultados ficam
 
-`data_quality_results` (tenant-aware): `run_id`, `rule_id`, `entity`, `severity`,
-`records_checked`, `records_failed`, `sample` (JSON com exemplos). Preenchida pelo
-pipeline futuro; vazia na v1.2.
+`data_quality_results` (tenant-aware, RLS): `ingestion_run_id`, `pipeline_run_id`,
+`rule_id`, `rule_description`, `entity`, `severity`, `blocking`, `records_checked`,
+`records_failed`, `sample`. Desde a Fase 2 é **preenchida a cada ingestão** — inclusive
+quando a carga falha. A amostra guarda só **referências** (linha do arquivo,
+`source_record_id`, motivo), nunca o conteúdo da linha.
 
 ## Bloqueio vs. continuação — resumo
 
@@ -49,8 +51,37 @@ pipeline futuro; vazia na v1.2.
 - **Continua com alerta** (`WARNING`): duplicidades (dedup resolve), inconsistência de
   despesa líquida (Gold recalcula), coparticipação acima do pago (registra e segue).
 
-## Extensões previstas (não na v1.2)
+## Extensões previstas (ainda não implementadas)
 
 Volumetria por competência (queda/pico anômalo de linhas), completude por campo (%
 preenchido), consistência temporal (competência de pagamento << competência de
 atendimento), reconciliação com o fechamento contábil do cliente.
+
+## Fase 2 — DQ no pipeline de ingestão
+
+Implementação: `backend/app/data_platform/quality.py`, que **reusa** as regras acima
+(`data_platform/quality/rules.py`, carregado sem duplicar lógica) e acrescenta as regras
+que só existem na carga de arquivo, avaliadas **antes** de qualquer promoção para Silver:
+
+| id | Severidade | Condição |
+|---|---|---|
+| `arquivo_obrigatorio_ausente` | ERROR (bloqueia) | arquivo de entidade `required: true` no mapping não veio no pacote |
+| `arquivo_opcional_ausente` | INFO | arquivo opcional ausente — capacidades dependentes ficam indisponíveis (readiness) |
+| `colunas_ausentes` | ERROR (bloqueia) | coluna de origem do mapping ausente no arquivo |
+| `mapping_invalido` | ERROR | linha rejeitada pelo mapping (tipo, obrigatório, vocabulário) — com motivos agregados |
+| `chave_duplicada` / `evento_duplicado` / `receita_duplicada` | WARNING | chave de negócio repetida no arquivo — mantém a última |
+| `fk_inexistente_<campo>` | ERROR | código referenciado não existe no pacote válido nem na Silver do tenant |
+| `uf_invalida` | ERROR | UF fora da lista oficial (a região é derivada da UF) |
+| `cobertura_<campo>` | INFO | % de preenchimento de campos opcionais (glosa, coparticipação, saída…) |
+| `volume` | INFO | linhas recebidas por entidade |
+| `gate_rejeicao` | ERROR (bloqueia) | linhas rejeitadas / recebidas > `quality.max_rejected_ratio` do mapping |
+
+**Gate:** com o limite padrão (`max_rejected_ratio: 0`), qualquer linha com ERROR bloqueia a
+carga inteira: ingestão `FAILED`, estágio `RECEIVED`, nada publicado, motivo em
+`error_summary` e resultados em `data_quality_results`. Com limite > 0 (decisão de
+onboarding), as linhas com ERROR são descartadas e a carga é `PARTIAL`. Referências por
+código são resolvidas em ordem de dependência: um código só serve de referência se a
+linha dele for válida.
+
+Testes: `test_data_quality_bloqueia_promocao`, `test_arquivo_obrigatorio_ausente_falha`,
+`test_linha_invalida_e_rejeitada_com_motivo`, `test_coluna_ausente_no_arquivo_rejeita_a_entidade`.

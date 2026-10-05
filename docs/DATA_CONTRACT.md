@@ -72,3 +72,16 @@ módulo de **reajuste** — ambos fora do escopo, dependem de discovery
 | Coortes (o porquê do porquê) | + data_adesao/data_saida + perfil_utilizacao |
 | Alertas configuráveis | nada além do acima |
 | Sinistralidade por contrato / Reajuste | receita_contrato (**não disponível na v1.2**) |
+
+## Fase 2 — o contrato em uso
+
+- Contrato **operacional** v1 (o que a carga de arquivo exige hoje):
+  `backend/app/data_platform/canonical.py`, explicado em
+  [MAPPING_FRAMEWORK.md](MAPPING_FRAMEWORK.md) §6 (inclui as diferenças deliberadas em
+  relação a este documento, ex.: cidade/UF do prestador obrigatórias).
+- Para o cliente, em linguagem de negócio: [CLIENT_DATA_REQUIREMENTS.md](CLIENT_DATA_REQUIREMENTS.md).
+- O contrato é aplicado por um mapping versionado por fonte; uma violação vira resultado
+  de Data Quality com linha e motivo ([DATA_QUALITY.md](DATA_QUALITY.md)).
+- Receita por plano continua opcional **no pacote**, mas sem ela as capabilities de
+  sinistralidade ficam `NOT_READY` ([CAPABILITY_READINESS.md](CAPABILITY_READINESS.md)).
+- `receita_contrato` segue fora do escopo (sinistralidade por contrato indisponível).

@@ -66,3 +66,17 @@ que o modelo sintético tem e um cliente real **não precisa fornecer**: `contra
 (orienta a geração), `eventos_assistenciais.cenario_tag` (QA). Campos que o cliente
 **precisa** fornecer e o motor ainda não usa: `beneficiario.motivo_saida`,
 `contrato.data_base`/`meta_sinistralidade`, tudo de `receita_contrato`.
+
+## Fase 2 — contrato operacional e linhagem
+
+- O subconjunto **executável** do modelo (o que uma carga de arquivo precisa entregar) está
+  em `backend/app/data_platform/canonical.py` — espelho destes YAMLs, com as diferenças
+  deliberadas documentadas em [MAPPING_FRAMEWORK.md](MAPPING_FRAMEWORK.md) §6.
+- A Silver **são** as tabelas canônicas do PostgreSQL. Desde a Fase 2 toda linha tem
+  linhagem: `source_system`, `source_connection_id`, `ingestion_run_id`,
+  `source_record_id` ([DATA_LINEAGE.md](DATA_LINEAGE.md)).
+- `contratos.codigo` e `prestadores.codigo` passaram a existir (chave de negócio
+  `(tenant_id, codigo)`); dados sintéticos antigos receberam `CTR-0001…`/`PRE-0001…`.
+- Colunas que só o gerador sintético usa (`contrato.vidas_alvo`, `cenario_tag`…) ficaram
+  opcionais — uma fonte real não precisa fornecê-las.
+- Chaves estrangeiras chegam por **código de negócio** e viram ids técnicos na Silver.
