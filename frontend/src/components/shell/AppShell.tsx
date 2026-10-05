@@ -22,6 +22,7 @@ import { Header } from "@/components/shell/Header";
 import { Sidebar } from "@/components/shell/Sidebar";
 import {
   Button,
+  DataNotReadyState,
   FeatureUnavailableState,
   ForbiddenState,
   LoadingState,
@@ -131,7 +132,12 @@ function RouteGate({ children }: { children: ReactNode }) {
     }
     if (me.tenant.status !== "ACTIVE") return <TenantSuspendedState />;
     if (req.permission && !s.can(req.permission)) return <ForbiddenState />;
-    if (req.feature && !s.hasFeature(req.feature)) return <FeatureUnavailableState feature={req.feature} />;
+    if (req.feature && !s.hasFeature(req.feature)) {
+      const cap = s.capability(req.feature);
+      // contratada, mas sem dados prontos ≠ fora do plano (o backend já decidiu; aqui só exibimos)
+      if (cap?.entitled) return <DataNotReadyState reason={cap.data_reason} />;
+      return <FeatureUnavailableState feature={req.feature} />;
+    }
   }
   return <>{children}</>;
 }

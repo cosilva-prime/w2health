@@ -50,6 +50,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/tenants", label: "Tenants", platform: true },
       { href: "/admin/planos", label: "Planos", platform: true },
       { href: "/admin/features", label: "Features", platform: true },
+      { href: "/admin/integracoes", label: "Integrações", platform: true },
       { href: "/admin/usuarios", label: "Usuários", platform: true },
       { href: "/admin/identidade", label: "Branding", platform: true },
       { href: "/admin/configuracoes", label: "Configurações", platform: true },
@@ -87,6 +88,7 @@ const ROTULOS_SEGMENTO: Record<string, string> = {
   planos: "Planos",
   features: "Features",
   tenants: "Tenants",
+  integracoes: "Integrações",
 };
 
 /** Rótulo legível para um segmento de rota (usado nos breadcrumbs). */

@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 
+import { RecoveryCodes } from "@/components/RecoveryCodes";
 import { Button, Card, Field, Input, PageHeader, StatusBadge } from "@/components/ui";
 import { apiSend, ApiError, setAccessToken } from "@/lib/api";
 import { ROLE_LABEL, useSession } from "@/lib/session";
@@ -84,6 +85,8 @@ function MfaCard() {
   const [senha, setSenha] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; texto: string } | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [codigos, setCodigos] = useState<string[] | null>(null);
+  const [codigoRegen, setCodigoRegen] = useState("");
 
   async function run(fn: () => Promise<void>) {
     setMsg(null);
@@ -112,8 +115,9 @@ function MfaCard() {
         <form className="grid gap-4 sm:grid-cols-[auto_1fr]" onSubmit={(e) => {
           e.preventDefault();
           run(async () => {
-            await apiSend("/auth/mfa/confirm", "POST", { code: codigo });
+            const r = await apiSend<{ recovery_codes?: string[] }>("/auth/mfa/confirm", "POST", { code: codigo });
             setSetup(null); setCodigo("");
+            setCodigos(r.recovery_codes ?? null);
             await s.reload();
             setMsg({ ok: true, texto: "MFA ativado." });
           });
@@ -127,6 +131,24 @@ function MfaCard() {
             <Field label="Código">{(id) => <Input id={id} inputMode="numeric" maxLength={6} required value={codigo} onChange={(e) => setCodigo(e.target.value.replace(/\D/g, ""))} />}</Field>
             <Button type="submit" variant="primary" loading={enviando}>Confirmar</Button>
           </div>
+        </form>
+      )}
+      {ativo && codigos && <div className="mb-4"><RecoveryCodes codes={codigos} onDone={() => setCodigos(null)} /></div>}
+      {ativo && !codigos && (
+        <form className="mb-4 grid gap-3 border-b border-slate-100 pb-4 sm:grid-cols-3" onSubmit={(e) => {
+          e.preventDefault();
+          run(async () => {
+            const r = await apiSend<{ recovery_codes: string[] }>("/auth/mfa/recovery-codes", "POST", { code: codigoRegen });
+            setCodigoRegen("");
+            setCodigos(r.recovery_codes);
+            await s.reload();
+          });
+        }}>
+          <p className="text-sm text-slate-600 sm:col-span-3">
+            Códigos de recuperação restantes: <b>{s.me!.user.recovery_codes_remaining}</b>. Gerar novos códigos invalida os anteriores.
+          </p>
+          <Field label="Código atual do autenticador">{(id) => <Input id={id} inputMode="numeric" maxLength={6} required value={codigoRegen} onChange={(e) => setCodigoRegen(e.target.value.replace(/\D/g, ""))} />}</Field>
+          <div className="flex items-end"><Button type="submit" loading={enviando}>Gerar novos códigos</Button></div>
         </form>
       )}
       {ativo && (

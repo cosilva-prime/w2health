@@ -31,6 +31,8 @@ export interface Transparencia {
   tipo_carga: string | null;
   janela: { inicio: string; fim: string } | null;
   camada: string;
+  fonte_ultima_carga?: { nome: string; tipo: string } | null;
+  fontes?: { nome: string; tipo: string; ultima_carga: string | null }[];
   kpis: Record<string, KpiDef>;
 }
 
@@ -91,6 +93,18 @@ export function KpiInfo({ kpi, extraFiltros }: { kpi: string; extraFiltros?: str
             </dd>
             <dt className="text-slate-400">Última atualização</dt>
             <dd>{fmtDataHora(data.ultima_atualizacao)}</dd>
+            <dt className="text-slate-400">Fonte da última carga</dt>
+            <dd>{data.fonte_ultima_carga ? `${data.fonte_ultima_carga.nome} (${data.fonte_ultima_carga.tipo})` : NA}</dd>
+            {(data.fontes ?? []).length > 0 && (
+              <>
+                <dt className="text-slate-400">Fontes ativas</dt>
+                <dd className="space-y-0.5 text-xs">
+                  {data.fontes!.map((x) => (
+                    <div key={x.nome}>{x.nome} · {x.tipo} · última carga disponível: {fmtDataHora(x.ultima_carga)}</div>
+                  ))}
+                </dd>
+              </>
+            )}
             <dt className="text-slate-400">Origem lógica</dt>
             <dd>{def.origem}</dd>
             <dt className="text-slate-400">Camada</dt>

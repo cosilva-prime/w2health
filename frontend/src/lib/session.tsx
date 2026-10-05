@@ -41,8 +41,27 @@ export interface Branding {
   customized?: boolean;
 }
 
+export interface Capability {
+  key: string;
+  name: string;
+  /** contratada (plano/override/global) */
+  entitled: boolean;
+  data_status: "READY" | "PARTIAL" | "NOT_READY";
+  data_reason: string;
+  /** disponível = contratada E dados prontos (decidido pelo backend) */
+  available: boolean;
+}
+
 export interface Me {
-  user: { id: string; email: string; name: string; platform_role: string | null; mfa_enabled: boolean };
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    platform_role: string | null;
+    mfa_enabled: boolean;
+    recovery_codes_remaining: number;
+  };
+  capabilities: Capability[];
   memberships: { tenant_id: string; tenant_name: string; role: string; tenant_status: string }[];
   platform_permissions: string[];
   tenant: {
@@ -67,6 +86,7 @@ interface SessionCtx {
   isSuperAdmin: boolean;
   can: (perm: string) => boolean;
   hasFeature: (key: string) => boolean;
+  capability: (key: string) => Capability | undefined;
   /** Conclui um login: guarda o access token (memória) e carrega /me. */
   acceptToken: (token: string) => Promise<Me | null>;
   reload: () => Promise<Me | null>;
@@ -185,6 +205,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isSuperAdmin: me?.user.platform_role === "SUPER_ADMIN",
       can: (p) => perms.has(p) || (me?.platform_permissions ?? []).includes(p),
       hasFeature: (k) => feats.has(k),
+      capability: (k) => (me?.capabilities ?? []).find((c) => c.key === k),
       acceptToken,
       reload,
       logout,

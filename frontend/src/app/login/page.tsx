@@ -12,6 +12,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, ReactNode, useEffect, useState } from "react";
 
+import { RecoveryCodes } from "@/components/RecoveryCodes";
 import { Button, Field, Input } from "@/components/ui";
 import { apiAssetUrl, apiGet, apiSend, ApiError } from "@/lib/api";
 import { applyBranding, Branding, useSession } from "@/lib/session";
@@ -20,12 +21,14 @@ type Etapa =
   | { tipo: "credenciais" }
   | { tipo: "mfa"; challenge: string }
   | { tipo: "troca_senha"; challenge: string }
-  | { tipo: "configurar_mfa"; challenge: string; setup?: { qr_svg: string; secret: string } };
+  | { tipo: "configurar_mfa"; challenge: string; setup?: { qr_svg: string; secret: string } }
+  | { tipo: "codigos"; codigos: string[]; resp: LoginResp };
 
 interface LoginResp {
   status: "ok" | "mfa_required" | "password_change_required" | "mfa_setup_required";
   access_token?: string;
   challenge_token?: string;
+  recovery_codes?: string[];
 }
 
 function destinoSeguro(next: string | null): string | null {
@@ -46,6 +49,8 @@ export default function LoginPage() {
   const [confirmacao, setConfirmacao] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [usarRecuperacao, setUsarRecuperacao] = useState(false);
+  const [recuperacao, setRecuperacao] = useState("");
   const tenant = params.get("tenant");
 
   useEffect(() => {
@@ -110,9 +115,13 @@ export default function LoginPage() {
     e.preventDefault();
     if (etapa.tipo !== "mfa") return;
     executar(async () => {
-      await concluir(await apiSend<LoginResp>("/auth/mfa/verify", "POST", {
-        challenge_token: etapa.challenge, code: codigo,
-      }));
+      const r = await apiSend<LoginResp>("/auth/mfa/verify", "POST", {
+        challenge_token: etapa.challenge,
+        ...(usarRecuperacao ? { recovery_code: recuperacao } : { code: codigo }),
+      });
+      setRecuperacao("");
+      setUsarRecuperacao(false);
+      await concluir(r);
     });
   };
 
@@ -137,9 +146,13 @@ export default function LoginPage() {
     e.preventDefault();
     if (etapa.tipo !== "configurar_mfa") return;
     executar(async () => {
-      await concluir(await apiSend<LoginResp>("/auth/mfa/confirm", "POST", {
+      const r = await apiSend<LoginResp>("/auth/mfa/confirm", "POST", {
         challenge_token: etapa.challenge, code: codigo,
-      }));
+      });
+      setCodigo("");
+      // códigos de recuperação: exibidos uma única vez antes de entrar
+      if (r.recovery_codes?.length) setEtapa({ tipo: "codigos", codigos: r.recovery_codes, resp: r });
+      else await concluir(r);
     });
   };
 
@@ -183,8 +196,19 @@ export default function LoginPage() {
           {etapa.tipo === "mfa" && (
             <Form titulo="Verificação em duas etapas" onSubmit={onMfa} erro={erro}
               subtitulo="Informe o código de 6 dígitos do seu aplicativo autenticador.">
-              <CodigoInput value={codigo} onChange={setCodigo} />
+              {usarRecuperacao ? (
+                <Field label="Código de recuperação" hint="Formato XXXXX-XXXXX. Cada código vale uma única vez.">
+                  {(id) => <Input id={id} autoComplete="off" required minLength={10} maxLength={20} value={recuperacao}
+                    onChange={(e) => setRecuperacao(e.target.value)} className="text-center font-mono uppercase" />}
+                </Field>
+              ) : (
+                <CodigoInput value={codigo} onChange={setCodigo} />
+              )}
               <Button variant="primary" type="submit" loading={enviando} className="w-full">Verificar</Button>
+              <button type="button" onClick={() => setUsarRecuperacao(!usarRecuperacao)}
+                className="w-full text-center text-xs text-brand-700 hover:underline">
+                {usarRecuperacao ? "Usar o código do autenticador" : "Perdeu o autenticador? Usar código de recuperação"}
+              </button>
               <Voltar onClick={() => setEtapa({ tipo: "credenciais" })} />
             </Form>
           )}
@@ -218,6 +242,14 @@ export default function LoginPage() {
               <CodigoInput value={codigo} onChange={setCodigo} />
               <Button variant="primary" type="submit" loading={enviando} className="w-full">Ativar e entrar</Button>
             </Form>
+          )}
+
+          {etapa.tipo === "codigos" && (
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold text-slate-900">MFA ativado</h2>
+              <RecoveryCodes codes={etapa.codigos} doneLabel="Guardei — entrar"
+                onDone={() => executar(() => concluir(etapa.resp))} />
+            </div>
           )}
         </div>
       </div>

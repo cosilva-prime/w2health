@@ -136,6 +136,13 @@ export async function apiUpload<T = unknown>(path: string, file: File): Promise<
   return request<T>(path, { method: "POST", body: fd });
 }
 
+/** Upload multipart de vários arquivos no campo `files` (pacote de carga de dados). */
+export async function apiUploadFiles<T = unknown>(path: string, files: File[]): Promise<T> {
+  const fd = new FormData();
+  files.forEach((f) => fd.append("files", f));
+  return request<T>(path, { method: "POST", body: fd });
+}
+
 export const qs = (params: Record<string, string | number | null | undefined>): string => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v != null && v !== "") p.set(k, String(v));

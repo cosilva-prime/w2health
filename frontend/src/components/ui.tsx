@@ -453,6 +453,17 @@ export function FeatureUnavailableState({ feature }: { feature?: string }) {
   );
 }
 
+export function DataNotReadyState({ reason }: { reason?: string }) {
+  return (
+    <StateBox icon="⏳" title="Recurso contratado — dados ainda não disponíveis" tone="amber">
+      {reason || "Os dados necessários para este módulo ainda não foram carregados."}
+      <div className="mt-1 text-xs opacity-75">
+        Assim que a carga com esses dados for publicada, o módulo é liberado automaticamente.
+      </div>
+    </StateBox>
+  );
+}
+
 export function TenantSuspendedState() {
   return (
     <StateBox icon="⏸" title="Ambiente suspenso" tone="amber">
@@ -481,6 +492,8 @@ export function ApiErrorState({ error }: { error: Error }) {
       return <ForbiddenState />;
     case "feature_unavailable":
       return <FeatureUnavailableState feature={e.feature} />;
+    case "capability_not_ready":
+      return <DataNotReadyState reason={e.message} />;
     case "tenant_suspended":
       return <TenantSuspendedState />;
     case "not_found":
