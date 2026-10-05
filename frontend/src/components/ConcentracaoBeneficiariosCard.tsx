@@ -31,7 +31,7 @@ export function ConcentracaoBeneficiariosCard() {
               <>
                 <p className="text-slate-700">
                   O aumento de despesa líquida somou{" "}
-                  <strong>R$ {fmtBRLCompact(data.delta_positivo_total)}</strong>.{" "}
+                  <strong>{fmtBRLCompact(data.delta_positivo_total)}</strong>.{" "}
                   <strong>{data.n_para_credito_50pct}</strong> beneficiário(s) concentram metade dele;
                   os 5 maiores respondem por{" "}
                   <strong>{fmtPct(data.top5_share_do_aumento * 100)}</strong>{" "}
@@ -47,7 +47,7 @@ export function ConcentracaoBeneficiariosCard() {
                         {b.codigo}
                       </Link>
                       <span className="tabular-nums text-slate-600">
-                        +R$ {fmtBRLCompact(b.delta)}{" "}
+                        +{fmtBRLCompact(b.delta)}{" "}
                         <span className="text-slate-400">({fmtPct(b.participacao_pct)})</span>
                       </span>
                     </li>

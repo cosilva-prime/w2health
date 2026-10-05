@@ -65,7 +65,8 @@ interface Source {
   last_error_at: string | null;
   last_error_summary: string | null;
   last_run?: Run | null;
-  last_run_reconciliation?: string | null;
+  last_published?: Run | null;
+  last_published_reconciliation?: string | null;
   onboarding_state?: string;
 }
 
@@ -117,7 +118,7 @@ function VisaoGeral() {
     <Card title="Fontes de todos os tenants">
       <DataState isLoading={isLoading && !data} error={error} empty={data?.itens.length === 0}>
         <Table>
-          <thead><tr><Th>Tenant</Th><Th>Fonte</Th><Th>Tipo</Th><Th>Status</Th><Th>Última execução</Th><Th>Registros</Th><Th>Reconciliação</Th><Th>Onboarding</Th></tr></thead>
+          <thead><tr><Th>Tenant</Th><Th>Fonte</Th><Th>Tipo</Th><Th>Status</Th><Th>Última execução</Th><Th>Última carga publicada</Th><Th>Reconciliação</Th><Th>Onboarding</Th></tr></thead>
           <tbody>
             {data?.itens.map((s) => (
               <tr key={`${s.tenant_id}-${s.id}`}>
@@ -130,12 +131,22 @@ function VisaoGeral() {
                     <>
                       <StatusBadge tone={STATUS_TONE[s.last_run.status]}>{s.last_run.status}</StatusBadge>{" "}
                       {fmt(s.last_run.finished_at ?? s.last_run.started_at)}
-                      <div className="text-slate-400">último sucesso: {fmt(s.last_success_at)}</div>
+                      {s.last_run.duplicate_of && <div className="text-slate-400">reenvio idêntico à #{s.last_run.duplicate_of}</div>}
                     </>
                   ) : "nunca executada"}
                 </Td>
-                <Td className="text-xs">{s.last_run ? `${s.last_run.records_valid}/${s.last_run.records_received} válidos · ${s.last_run.errors} erros` : "—"}</Td>
-                <Td>{s.last_run_reconciliation ? <StatusBadge tone={STATUS_TONE[s.last_run_reconciliation]}>{s.last_run_reconciliation}</StatusBadge> : "—"}</Td>
+                <Td className="text-xs">
+                  {s.last_published ? (
+                    <>
+                      #{s.last_published.id} · {fmt(s.last_published.finished_at)}
+                      <div className="text-slate-400">
+                        {s.last_published.records_valid}/{s.last_published.records_received} válidos · {s.last_published.errors} erros
+                        {s.last_published.competencia_inicio && ` · ${s.last_published.competencia_inicio.slice(0, 7)} a ${s.last_published.competencia_fim?.slice(0, 7)}`}
+                      </div>
+                    </>
+                  ) : "nenhuma"}
+                </Td>
+                <Td>{s.last_published_reconciliation ? <StatusBadge tone={STATUS_TONE[s.last_published_reconciliation]}>{s.last_published_reconciliation}</StatusBadge> : <span className="text-xs text-slate-400">{s.last_published ? "não aplicável" : "—"}</span>}</Td>
                 <Td className="text-xs">{s.onboarding_state}</Td>
               </tr>
             ))}
@@ -200,8 +211,10 @@ function TenantIntegracoes({ tenant }: { tenant: string }) {
               {runs.data?.itens.map((r) => (
                 <tr key={r.id}>
                   <Td className="font-mono text-xs">{r.id}</Td>
-                  <Td><StatusBadge tone={STATUS_TONE[r.status]}>{r.status}</StatusBadge>{r.duplicate_of && <div className="text-[11px] text-slate-400">idêntica à #{r.duplicate_of}</div>}</Td>
-                  <Td><StageBar stage={r.stage} status={r.status} /></Td>
+                  <Td><StatusBadge tone={STATUS_TONE[r.status]}>{r.status}</StatusBadge></Td>
+                  <Td>{r.duplicate_of
+                    ? <span className="text-xs text-slate-500">reenvio idêntico à #{r.duplicate_of} — nada reprocessado</span>
+                    : <StageBar stage={r.stage} status={r.status} />}</Td>
                   <Td className="text-xs">{r.records_received} recebidos · {r.records_valid} válidos · {r.records_rejected} rejeitados<div className="text-slate-400">{r.errors} erros · {r.warnings} avisos</div></Td>
                   <Td className="text-xs">{r.competencia_inicio ? `${r.competencia_inicio.slice(0, 7)} a ${r.competencia_fim?.slice(0, 7)}` : "—"}</Td>
                   <Td>{r.reconciliation ? <StatusBadge tone={STATUS_TONE[r.reconciliation]}>{r.reconciliation}</StatusBadge> : "—"}</Td>

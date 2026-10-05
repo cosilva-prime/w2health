@@ -83,7 +83,7 @@ export default function ContratosPage() {
                       </div>
                     </td>
                     <td className="px-3">{fmtNum(c.vidas)}</td>
-                    <td className="px-3 text-right">R$ {fmtBRLCompact(c.despesa_liquida)}</td>
+                    <td className="px-3 text-right">{fmtBRLCompact(c.despesa_liquida)}</td>
                     <td
                       className={`px-3 text-right ${
                         (c.variacao_despesa_liquida_pct ?? 0) > 0 ? "text-rose-600" : "text-emerald-600"
@@ -91,7 +91,7 @@ export default function ContratosPage() {
                     >
                       {fmtSignedPct(c.variacao_despesa_liquida_pct)}
                     </td>
-                    <td className="px-3 text-right">R$ {fmtBRLCompact(c.custo_pmpm)}</td>
+                    <td className="px-3 text-right">{fmtBRLCompact(c.custo_pmpm)}</td>
                     <td className="px-3 text-right">{fmtPct(c.top5_share * 100)}</td>
                     <td className="px-3 text-right">{c.n_beneficiarios_alto_custo || "—"}</td>
                   </tr>

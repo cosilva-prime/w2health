@@ -19,8 +19,10 @@ export const fmtBRL = (v: number | null | undefined, cents = false): string =>
 export const fmtBRLCompact = (v: number | null | undefined): string => {
   if (v == null) return "—";
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `${(v / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
-  if (abs >= 1_000) return `${(v / 1_000).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mil`;
+  // sempre com o prefixo da moeda (antes: "R$ 286,00" abaixo de mil, mas "34 mil" sem R$)
+  const sinal = v < 0 ? "-" : "";
+  if (abs >= 1_000_000) return `${sinal}R$ ${(abs / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
+  if (abs >= 1_000) return `${sinal}R$ ${(abs / 1_000).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mil`;
   return brl.format(v);
 };
 

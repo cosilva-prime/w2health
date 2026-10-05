@@ -209,6 +209,19 @@ def test_mesmo_pacote_nao_duplica(csv_env):
     assert depois == antes
 
 
+def test_visao_geral_mostra_ultima_carga_efetiva_e_nao_o_reenvio(csv_env):
+    """O reenvio idêntico é a última EXECUÇÃO, mas não a última CARGA: registros e
+    reconciliação da visão geral vêm da carga publicada."""
+    sa = csv_env["sa"]
+    dup = _upload(sa, CSV_B, csv_env["fontes"][CSV_B], csv_env["pb"])
+    assert dup["duplicate_of"] == csv_env["run_b"]["ingestion_run_id"]
+    item = next(i for i in sa.get("/api/admin/integrations").json()["itens"] if i["tenant_id"] == CSV_B)
+    assert item["last_run"]["duplicate_of"] == csv_env["run_b"]["ingestion_run_id"]
+    assert item["last_published"]["id"] == csv_env["run_b"]["ingestion_run_id"]
+    assert item["last_published"]["records_valid"] > 0
+    assert item["last_published_reconciliation"] == "PASS"
+
+
 def test_reprocesso_de_competencia_corrige_e_remove_sem_duplicar(csv_env):
     sa, iso = csv_env["sa"], csv_env["iso"]
     linhas = csv_env["pa"]["eventos.csv"].decode().splitlines()

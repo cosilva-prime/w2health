@@ -4,7 +4,7 @@
 
 COMPOSE = docker compose
 
-.PHONY: help up down restart logs ps build test test-backend clean migrate seed seed-full seed-tenant-b bootstrap rebuild-agg
+.PHONY: help up down restart logs ps build test test-backend clean migrate seed seed-full seed-tenant-b bootstrap rebuild-agg security-check backup-check
 
 help:
 	@echo "up          - sobe todo o ambiente (build + start em background)"
@@ -17,6 +17,8 @@ help:
 	@echo "seed        - massa sintética do tenant demo (Operadora Vida Plena)"
 	@echo "seed-tenant-b - 2º tenant sintético (mesmos códigos de negócio — isolamento)"
 	@echo "bootstrap   - catálogo de planos/features + usuários demo (senhas exibidas uma vez)"
+	@echo "security-check - vulnerabilidades conhecidas (pip-audit + npm audit), sem upgrade automático"
+	@echo "backup-check  - pg_dump -> restore em banco temporário -> compara contagens por tenant"
 	@echo "clean       - down + remove volumes (apaga o banco)"
 
 up:
@@ -61,3 +63,9 @@ rebuild-agg:
 
 clean:
 	$(COMPOSE) down -v
+
+security-check:
+	pwsh -File scripts/security-check.ps1
+
+backup-check:
+	pwsh -File scripts/backup-restore-check.ps1

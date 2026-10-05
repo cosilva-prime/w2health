@@ -106,9 +106,14 @@ def overview(_p: Principal = Depends(_INTEG), db: Session = Depends(get_db)) -> 
             for c in conn_svc.list_for_tenant(s, t.id):
                 ultimo = s.execute(select(IngestionRun).where(IngestionRun.source_connection_id == c.id)
                                    .order_by(desc(IngestionRun.id))).scalars().first()
+                # última carga EFETIVA publicada (reenvio idêntico não conta como carga)
+                publicada = s.execute(select(IngestionRun).where(
+                    IngestionRun.source_connection_id == c.id, IngestionRun.stage == "AVAILABLE",
+                    IngestionRun.duplicate_of.is_(None)).order_by(desc(IngestionRun.id))).scalars().first()
                 itens.append({"tenant_id": t.id, "tenant_name": t.name, **conn_svc.as_dict(c),
                               "last_run": run_dict(ultimo) if ultimo else None,
-                              "last_run_reconciliation": _recon_status(s, ultimo.id) if ultimo else None})
+                              "last_published": run_dict(publicada) if publicada else None,
+                              "last_published_reconciliation": _recon_status(s, publicada.id) if publicada else None})
             ob = onboarding.get(s, t.id)
             s.commit()
         for i in itens:

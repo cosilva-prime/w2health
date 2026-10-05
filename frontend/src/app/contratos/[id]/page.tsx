@@ -90,11 +90,11 @@ export default function ContratoDetalhePage() {
               <Stat label="Vidas" value={fmtNum(data.kpis.vidas)} />
               <Stat
                 label="Despesa líquida"
-                value={`R$ ${fmtBRLCompact(data.kpis.despesa_liquida)}`}
+                value={`${fmtBRLCompact(data.kpis.despesa_liquida)}`}
                 delta={data.kpis.variacao_despesa_liquida_pct}
                 deltaKind="pct"
               />
-              <Stat label="Custo PMPM" value={`R$ ${fmtBRLCompact(data.kpis.custo_pmpm)}`} />
+              <Stat label="Custo PMPM" value={`${fmtBRLCompact(data.kpis.custo_pmpm)}`} />
               <Stat
                 label="Concentração (top-5)"
                 value={fmtPct(data.kpis.top5_share * 100)}
@@ -157,7 +157,7 @@ export default function ContratoDetalhePage() {
                             {b.codigo}
                           </Link>
                         </td>
-                        <td className="px-3 text-right">R$ {fmtBRLCompact(b.despesa_liquida)}</td>
+                        <td className="px-3 text-right">{fmtBRLCompact(b.despesa_liquida)}</td>
                         <td className="px-3 text-right">{b.eventos}</td>
                         <td className="px-3 text-right font-medium">{fmtPct(b.participacao_pct)}</td>
                       </tr>
@@ -176,14 +176,14 @@ export default function ContratoDetalhePage() {
                         {d.categoria} <EfeitoBadge efeito={d.efeito_principal} />
                       </span>
                       <span className="tabular-nums text-rose-600">
-                        R$ {fmtBRLCompact(d.impacto_financeiro)}
+                        {fmtBRLCompact(d.impacto_financeiro)}
                       </span>
                     </li>
                   ))}
                   {data.drivers.fatores_reducao.map((d) => (
                     <li key={d.chave} className="flex items-center justify-between text-emerald-700">
                       <span>{d.categoria}</span>
-                      <span className="tabular-nums">R$ {fmtBRLCompact(d.impacto_financeiro)}</span>
+                      <span className="tabular-nums">{fmtBRLCompact(d.impacto_financeiro)}</span>
                     </li>
                   ))}
                 </ul>
