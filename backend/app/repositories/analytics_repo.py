@@ -1,4 +1,12 @@
-"""Consultas da camada analítica. Retornam estruturas Python simples (dicts/listas)."""
+"""Consultas da camada analítica. Retornam estruturas Python simples (dicts/listas).
+
+Fundação SaaS V1 — **isolamento por tenant na aplicação (fail-closed)**:
+toda função lê o tenant amarrado à sessão com `_t(session)` (levanta
+`TenantContextMissing` se ausente) e filtra a tabela raiz por `tenant_id = :t`. Buscas por
+id (prestador, beneficiário, contrato, código) também filtram tenant: um id de outro tenant
+é indistinguível de inexistente (sem IDOR). Esta é a 1ª camada; a 2ª é o RLS do
+PostgreSQL (`app.tenant_id`), que também cobre as tabelas de JOIN. Nenhuma fórmula muda.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +15,14 @@ from datetime import date
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.db.tenant_scope import tenant_of as _t
+
 
 def competencias(session: Session) -> list[date]:
     rows = session.execute(
-        text("SELECT competencia FROM agg_sinistralidade_competencia ORDER BY competencia")
+        text("SELECT competencia FROM agg_sinistralidade_competencia WHERE tenant_id = :t "
+             "ORDER BY competencia"),
+        {"t": _t(session)},
     ).scalars().all()
     return list(rows)
 
@@ -33,8 +45,9 @@ def serie_sinistralidade(session: Session) -> list[dict]:
     rows = session.execute(
         text(
             f"SELECT {_COLUNAS_SINISTRALIDADE} FROM agg_sinistralidade_competencia "
-            "ORDER BY competencia"
-        )
+            "WHERE tenant_id = :t ORDER BY competencia"
+        ),
+        {"t": _t(session)},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -43,9 +56,9 @@ def sinistralidade_mes(session: Session, competencia: date) -> dict | None:
     r = session.execute(
         text(
             f"SELECT {_COLUNAS_SINISTRALIDADE} FROM agg_sinistralidade_competencia "
-            "WHERE competencia = :c"
+            "WHERE tenant_id = :t AND competencia = :c"
         ),
-        {"c": competencia},
+        {"t": _t(session), "c": competencia},
     ).mappings().first()
     return dict(r) if r else None
 
@@ -64,10 +77,10 @@ def dimensao_mes(session: Session, competencia: date, dimensao: str) -> dict[str
             f"""
             SELECT {_COLS_DIMENSAO}
             FROM agg_competencia_dimensao
-            WHERE competencia = :c AND dimensao = :d
+            WHERE tenant_id = :t AND competencia = :c AND dimensao = :d
             """
         ),
-        {"c": competencia, "d": dimensao},
+        {"t": _t(session), "c": competencia, "d": dimensao},
     ).mappings().all()
     return {r["chave"]: dict(r) for r in rows}
 
@@ -78,10 +91,10 @@ def dimensao_serie(session: Session, dimensao: str, chave: str) -> list[dict]:
             f"""
             SELECT competencia, {_COLS_DIMENSAO}
             FROM agg_competencia_dimensao
-            WHERE dimensao = :d AND chave = :k ORDER BY competencia
+            WHERE tenant_id = :t AND dimensao = :d AND chave = :k ORDER BY competencia
             """
         ),
-        {"d": dimensao, "k": chave},
+        {"t": _t(session), "d": dimensao, "k": chave},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -98,10 +111,10 @@ def prestadores_mes(session: Session, competencia: date) -> list[dict]:
             JOIN prestadores p ON p.id = a.id_prestador
             JOIN regioes r ON r.id = p.id_regiao
             JOIN especialidades e ON e.id = p.id_especialidade_principal
-            WHERE a.competencia = :c
+            WHERE a.tenant_id = :t AND a.competencia = :c
             """
         ),
-        {"c": competencia},
+        {"t": _t(session), "c": competencia},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -112,10 +125,11 @@ def prestador_serie(session: Session, id_prestador: int) -> list[dict]:
             """
             SELECT competencia, despesa, eventos, beneficiarios, custo_medio, participacao,
                    procedimento_top_id, procedimento_top_share
-            FROM agg_prestador_competencia WHERE id_prestador = :p ORDER BY competencia
+            FROM agg_prestador_competencia
+            WHERE tenant_id = :t AND id_prestador = :p ORDER BY competencia
             """
         ),
-        {"p": id_prestador},
+        {"t": _t(session), "p": id_prestador},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -130,10 +144,10 @@ def prestador_info(session: Session, id_prestador: int) -> dict | None:
             FROM prestadores p
             JOIN regioes r ON r.id = p.id_regiao
             JOIN especialidades e ON e.id = p.id_especialidade_principal
-            WHERE p.id = :p
+            WHERE p.tenant_id = :t AND p.id = :p
             """
         ),
-        {"p": id_prestador},
+        {"t": _t(session), "p": id_prestador},
     ).mappings().first()
     return dict(r) if r else None
 
@@ -149,12 +163,12 @@ def prestador_top_procedimentos(
                    AVG(e.valor_pago) AS custo_medio
             FROM eventos_assistenciais e
             JOIN procedimentos pr ON pr.id = e.id_procedimento
-            WHERE e.id_prestador = :p AND e.competencia = :c
+            WHERE e.tenant_id = :t AND e.id_prestador = :p AND e.competencia = :c
             GROUP BY pr.id, pr.descricao, pr.grupo_procedimento
             ORDER BY despesa DESC LIMIT :lim
             """
         ),
-        {"p": id_prestador, "c": competencia, "lim": limit},
+        {"t": _t(session), "p": id_prestador, "c": competencia, "lim": limit},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -171,10 +185,10 @@ def prestador_peers_mes(
                    a.procedimento_top_share
             FROM agg_prestador_competencia a
             JOIN prestadores p ON p.id = a.id_prestador
-            WHERE a.competencia = :c AND p.id_especialidade_principal = :e
+            WHERE a.tenant_id = :t AND a.competencia = :c AND p.id_especialidade_principal = :e
             """
         ),
-        {"c": competencia, "e": id_especialidade_principal},
+        {"t": _t(session), "c": competencia, "e": id_especialidade_principal},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -184,10 +198,11 @@ def beneficiario_serie(session: Session, id_beneficiario: int) -> list[dict]:
         text(
             """
             SELECT competencia, despesa, despesa_liquida, eventos
-            FROM agg_beneficiario_competencia WHERE id_beneficiario = :b ORDER BY competencia
+            FROM agg_beneficiario_competencia
+            WHERE tenant_id = :t AND id_beneficiario = :b ORDER BY competencia
             """
         ),
-        {"b": id_beneficiario},
+        {"t": _t(session), "b": id_beneficiario},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -197,8 +212,8 @@ def beneficiarios_top(
     faixa_etaria: str | None = None, sexo: str | None = None, id_plano: int | None = None,
     id_contrato: int | None = None,
 ) -> tuple[list[dict], int]:
-    where = ["a.competencia = :c"]
-    params: dict = {"c": competencia, "lim": limit, "off": offset}
+    where = ["a.tenant_id = :t", "a.competencia = :c"]
+    params: dict = {"t": _t(session), "c": competencia, "lim": limit, "off": offset}
     if faixa_etaria:
         where.append("b.faixa_etaria = :fe")
         params["fe"] = faixa_etaria
@@ -251,17 +266,18 @@ def beneficiario_info(session: Session, id_beneficiario: int) -> dict | None:
             JOIN regioes r ON r.id = b.id_regiao
             JOIN planos pl ON pl.id = b.id_plano
             JOIN contratos ct ON ct.id = b.id_contrato
-            WHERE b.id = :b
+            WHERE b.tenant_id = :t AND b.id = :b
             """
         ),
-        {"b": id_beneficiario},
+        {"t": _t(session), "b": id_beneficiario},
     ).mappings().first()
     return dict(r) if r else None
 
 
 def beneficiario_por_codigo(session: Session, codigo: str) -> int | None:
     return session.execute(
-        text("SELECT id FROM beneficiarios WHERE codigo = :c"), {"c": codigo}
+        text("SELECT id FROM beneficiarios WHERE tenant_id = :t AND codigo = :c"),
+        {"t": _t(session), "c": codigo},
     ).scalar_one_or_none()
 
 
@@ -279,11 +295,11 @@ def beneficiario_eventos(session: Session, id_beneficiario: int) -> list[dict]:
             JOIN especialidades es ON es.id = e.id_especialidade
             JOIN prestadores pr ON pr.id = e.id_prestador
             LEFT JOIN diagnosticos d ON d.id = e.id_diagnostico
-            WHERE e.id_beneficiario = :b
+            WHERE e.tenant_id = :t AND e.id_beneficiario = :b
             ORDER BY e.data_evento
             """
         ),
-        {"b": id_beneficiario},
+        {"t": _t(session), "b": id_beneficiario},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -291,9 +307,10 @@ def beneficiario_eventos(session: Session, id_beneficiario: int) -> list[dict]:
 def despesa_por_beneficiario(session: Session, competencia: date) -> list[float]:
     rows = session.execute(
         text(
-            "SELECT despesa FROM agg_beneficiario_competencia WHERE competencia = :c"
+            "SELECT despesa FROM agg_beneficiario_competencia "
+            "WHERE tenant_id = :t AND competencia = :c"
         ),
-        {"c": competencia},
+        {"t": _t(session), "c": competencia},
     ).scalars().all()
     return [float(x) for x in rows]
 
@@ -330,7 +347,7 @@ def eventos_da_categoria(
     Usado no drill-down "onde investigar primeiro".
     """
     filtro_dim, fparams = _filtro_dimensao(dimensao, chave)
-    params: dict = {"c": competencia, "lim": limit, **fparams}
+    params: dict = {"t": _t(session), "c": competencia, "lim": limit, **fparams}
 
     if agrupar_por == "beneficiario":
         sel = "b.id AS id, b.codigo AS rotulo"
@@ -348,7 +365,7 @@ def eventos_da_categoria(
             JOIN procedimentos proc ON proc.id = e.id_procedimento
             JOIN prestadores prov ON prov.id = e.id_prestador
             JOIN beneficiarios b ON b.id = e.id_beneficiario
-            WHERE e.competencia = :c AND {filtro_dim}
+            WHERE e.tenant_id = :t AND e.competencia = :c AND {filtro_dim}
             GROUP BY {grp}
             ORDER BY despesa DESC
             LIMIT :lim
@@ -377,11 +394,11 @@ def beneficiarios_da_categoria(
             FROM eventos_assistenciais e
             JOIN procedimentos proc ON proc.id = e.id_procedimento
             JOIN beneficiarios b ON b.id = e.id_beneficiario
-            WHERE e.competencia = :c AND {filtro_dim} {filtro_ctr}
+            WHERE e.tenant_id = :t AND e.competencia = :c AND {filtro_dim} {filtro_ctr}
             GROUP BY e.id_beneficiario
             """
         ),
-        {"c": competencia, **fparams},
+        {"t": _t(session), "c": competencia, **fparams},
     ).mappings().all()
     return {
         int(r["id"]): {"despesa": float(r["despesa"]), "eventos": int(r["eventos"])} for r in rows
@@ -396,10 +413,10 @@ def beneficiarios_status_bulk(session: Session, ids: list[int]) -> dict[int, dic
         text(
             """
             SELECT id, codigo, status, data_saida, data_adesao, faixa_etaria, sexo, id_contrato
-            FROM beneficiarios WHERE id = ANY(:ids)
+            FROM beneficiarios WHERE tenant_id = :t AND id = ANY(:ids)
             """
         ),
-        {"ids": ids},
+        {"t": _t(session), "ids": ids},
     ).mappings().all()
     return {int(r["id"]): dict(r) for r in rows}
 
@@ -423,10 +440,11 @@ def prestadores_por_beneficiario_na_categoria(
             FROM eventos_assistenciais e
             JOIN procedimentos proc ON proc.id = e.id_procedimento
             JOIN beneficiarios b ON b.id = e.id_beneficiario
-            WHERE e.competencia = :c AND {filtro_dim} {filtro_ctr} AND e.id_beneficiario = ANY(:ids)
+            WHERE e.tenant_id = :t AND e.competencia = :c AND {filtro_dim} {filtro_ctr}
+                  AND e.id_beneficiario = ANY(:ids)
             """
         ),
-        {"c": competencia, "ids": ids, **fparams},
+        {"t": _t(session), "c": competencia, "ids": ids, **fparams},
     ).mappings().all()
     out: dict[int, set[int]] = {}
     for r in rows:
@@ -454,11 +472,12 @@ def perfil_utilizacao_despesa(
             FROM eventos_assistenciais e
             JOIN procedimentos proc ON proc.id = e.id_procedimento
             JOIN beneficiarios b ON b.id = e.id_beneficiario
-            WHERE e.competencia = :c AND {filtro_dim} {filtro_ctr} AND e.id_beneficiario = ANY(:ids)
+            WHERE e.tenant_id = :t AND e.competencia = :c AND {filtro_dim} {filtro_ctr}
+                  AND e.id_beneficiario = ANY(:ids)
             GROUP BY proc.perfil_utilizacao
             """
         ),
-        {"c": competencia, "ids": ids, **fparams},
+        {"t": _t(session), "c": competencia, "ids": ids, **fparams},
     ).mappings().all()
     return {r["perfil"]: float(r["despesa"]) for r in rows}
 
@@ -477,11 +496,11 @@ def procedimentos_mes_detalhe(session: Session, competencia: date) -> list[dict]
                    SUM(e.valor_pago) AS despesa
             FROM eventos_assistenciais e
             JOIN procedimentos pr ON pr.id = e.id_procedimento
-            WHERE e.competencia = :c
+            WHERE e.tenant_id = :t AND e.competencia = :c
             GROUP BY e.id_procedimento, pr.id_especialidade, pr.grupo_procedimento, pr.descricao
             """
         ),
-        {"c": competencia},
+        {"t": _t(session), "c": competencia},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -497,10 +516,10 @@ def beneficiarios_despesa_mes(session: Session, competencia: date) -> dict[int, 
             SELECT a.id_beneficiario AS id, a.despesa, a.eventos, b.codigo
             FROM agg_beneficiario_competencia a
             JOIN beneficiarios b ON b.id = a.id_beneficiario
-            WHERE a.competencia = :c
+            WHERE a.tenant_id = :t AND a.competencia = :c
             """
         ),
-        {"c": competencia},
+        {"t": _t(session), "c": competencia},
     ).mappings().all()
     return {
         int(r["id"]): {
@@ -520,19 +539,21 @@ def planos_sinistralidade_mes(session: Session, competencia: date) -> list[dict]
                    COALESCE(d.despesa, 0) AS despesa,
                    COALESCE(v.vidas, 0) AS vidas
             FROM planos pl
-            LEFT JOIN receitas r ON r.id_plano = pl.id AND r.competencia = :c
+            LEFT JOIN receitas r
+                   ON r.id_plano = pl.id AND r.competencia = :c AND r.tenant_id = :t
             LEFT JOIN (
                 SELECT b.id_plano, SUM(e.valor_pago) AS despesa
                 FROM eventos_assistenciais e JOIN beneficiarios b ON b.id = e.id_beneficiario
-                WHERE e.competencia = :c GROUP BY b.id_plano
+                WHERE e.tenant_id = :t AND e.competencia = :c GROUP BY b.id_plano
             ) d ON d.id_plano = pl.id
             LEFT JOIN (
                 SELECT id_plano, COUNT(*) AS vidas FROM beneficiarios
-                WHERE status = 'ativo' GROUP BY id_plano
+                WHERE tenant_id = :t AND status = 'ativo' GROUP BY id_plano
             ) v ON v.id_plano = pl.id
+            WHERE pl.tenant_id = :t
             """
         ),
-        {"c": competencia},
+        {"t": _t(session), "c": competencia},
     ).mappings().all()
     out = []
     for r in rows:
@@ -551,10 +572,13 @@ def contratos_vidas_mes(session: Session) -> dict[int, dict]:
             """
             SELECT ct.id, ct.nome AS rotulo, COUNT(b.id) AS vidas
             FROM contratos ct
-            LEFT JOIN beneficiarios b ON b.id_contrato = ct.id AND b.status = 'ativo'
+            LEFT JOIN beneficiarios b
+                   ON b.id_contrato = ct.id AND b.status = 'ativo' AND b.tenant_id = :t
+            WHERE ct.tenant_id = :t
             GROUP BY ct.id, ct.nome
             """
-        )
+        ),
+        {"t": _t(session)},
     ).mappings().all()
     return {int(r["id"]): {"rotulo": r["rotulo"], "vidas": r["vidas"]} for r in rows}
 
@@ -565,9 +589,10 @@ def gabarito(session: Session) -> list[dict]:
             """
             SELECT codigo, nome, competencia_alvo, dimensao, chave_alvo, rotulo_alvo,
                    efeito_esperado, descricao, params
-            FROM cenarios_gabarito ORDER BY codigo
+            FROM cenarios_gabarito WHERE tenant_id = :t ORDER BY codigo
             """
-        )
+        ),
+        {"t": _t(session)},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -603,10 +628,10 @@ def contrato_info(session: Session, id_contrato: int) -> dict | None:
             SELECT ct.id, ct.nome, ct.tipo, ct.vidas_alvo, pl.nome AS plano,
                    pl.id AS id_plano
             FROM contratos ct JOIN planos pl ON pl.id = ct.id_plano
-            WHERE ct.id = :c
+            WHERE ct.tenant_id = :t AND ct.id = :c
             """
         ),
-        {"c": id_contrato},
+        {"t": _t(session), "c": id_contrato},
     ).mappings().first()
     return dict(r) if r else None
 
@@ -619,10 +644,10 @@ def contrato_competencia(session: Session, id_contrato: int, competencia: date) 
                    despesa_liquida, eventos, beneficiarios_com_evento, custo_pmpm,
                    gini, top5_share, n_beneficiarios_alto_custo
             FROM agg_contrato_competencia
-            WHERE id_contrato = :c AND competencia = :m
+            WHERE tenant_id = :t AND id_contrato = :c AND competencia = :m
             """
         ),
-        {"c": id_contrato, "m": competencia},
+        {"t": _t(session), "c": id_contrato, "m": competencia},
     ).mappings().first()
     return dict(r) if r else None
 
@@ -634,10 +659,11 @@ def contrato_serie(session: Session, id_contrato: int) -> list[dict]:
             SELECT competencia, vidas, despesa, despesa_bruta, glosas, coparticipacao,
                    despesa_liquida, eventos, custo_pmpm, gini, top5_share,
                    n_beneficiarios_alto_custo
-            FROM agg_contrato_competencia WHERE id_contrato = :c ORDER BY competencia
+            FROM agg_contrato_competencia
+            WHERE tenant_id = :t AND id_contrato = :c ORDER BY competencia
             """
         ),
-        {"c": id_contrato},
+        {"t": _t(session), "c": id_contrato},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -653,11 +679,11 @@ def contratos_resumo_mes(session: Session, competencia: date) -> list[dict]:
             FROM agg_contrato_competencia ac
             JOIN contratos ct ON ct.id = ac.id_contrato
             JOIN planos pl ON pl.id = ct.id_plano
-            WHERE ac.competencia = :m
+            WHERE ac.tenant_id = :t AND ac.competencia = :m
             ORDER BY ac.despesa_liquida DESC
             """
         ),
-        {"m": competencia},
+        {"t": _t(session), "m": competencia},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -713,11 +739,11 @@ def dimensao_mes_por_contrato(
             FROM eventos_assistenciais e
             JOIN beneficiarios b ON b.id = e.id_beneficiario
             {joins}
-            WHERE e.competencia = :m AND b.id_contrato = :c
+            WHERE e.tenant_id = :t AND e.competencia = :m AND b.id_contrato = :c
             GROUP BY {chave_expr}
             """
         ),
-        {"m": competencia, "c": id_contrato},
+        {"t": _t(session), "m": competencia, "c": id_contrato},
     ).mappings().all()
     return {r["chave"]: dict(r) for r in rows}
 
@@ -737,11 +763,11 @@ def procedimentos_mes_detalhe_por_contrato(
             FROM eventos_assistenciais e
             JOIN beneficiarios b ON b.id = e.id_beneficiario
             JOIN procedimentos pr ON pr.id = e.id_procedimento
-            WHERE e.competencia = :m AND b.id_contrato = :c
+            WHERE e.tenant_id = :t AND e.competencia = :m AND b.id_contrato = :c
             GROUP BY e.id_procedimento, pr.id_especialidade, pr.grupo_procedimento, pr.descricao
             """
         ),
-        {"m": competencia, "c": id_contrato},
+        {"t": _t(session), "m": competencia, "c": id_contrato},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -752,7 +778,7 @@ def beneficiarios_delta_mes(
     """id_beneficiario -> {codigo, id_contrato, atual, anterior, delta} sobre despesa
     LÍQUIDA (agg_beneficiario_competencia). Base da concentração da VARIAÇÃO (C1)."""
     filtro = "AND ac.id_contrato = :ctr" if id_contrato is not None else ""
-    params: dict = {"m": competencia, "a": competencia_ant}
+    params: dict = {"t": _t(session), "m": competencia, "a": competencia_ant}
     if id_contrato is not None:
         params["ctr"] = id_contrato
     rows = session.execute(
@@ -763,7 +789,7 @@ def beneficiarios_delta_mes(
                    COALESCE(SUM(ac.despesa_liquida) FILTER (WHERE ac.competencia = :a), 0) AS anterior
             FROM agg_beneficiario_competencia ac
             JOIN beneficiarios b ON b.id = ac.id_beneficiario
-            WHERE ac.competencia IN (:m, :a) {filtro}
+            WHERE ac.tenant_id = :t AND ac.competencia IN (:m, :a) {filtro}
             GROUP BY b.id, b.codigo, ac.id_contrato
             """
         ),
@@ -789,18 +815,20 @@ def beneficiarios_liquida_contrato_mes(
             SELECT b.id, b.codigo, ac.despesa_liquida, ac.eventos
             FROM agg_beneficiario_competencia ac
             JOIN beneficiarios b ON b.id = ac.id_beneficiario
-            WHERE ac.competencia = :m AND ac.id_contrato = :c AND ac.despesa_liquida > 0
+            WHERE ac.tenant_id = :t AND ac.competencia = :m AND ac.id_contrato = :c
+                  AND ac.despesa_liquida > 0
             ORDER BY ac.despesa_liquida DESC
             """
         ),
-        {"m": competencia, "c": id_contrato},
+        {"t": _t(session), "m": competencia, "c": id_contrato},
     ).mappings().all()
     return [dict(r) for r in rows]
 
 
 def beneficiario_serie_contrato(session: Session, id_beneficiario: int) -> int | None:
     return session.execute(
-        text("SELECT id_contrato FROM beneficiarios WHERE id = :b"), {"b": id_beneficiario}
+        text("SELECT id_contrato FROM beneficiarios WHERE tenant_id = :t AND id = :b"),
+        {"t": _t(session), "b": id_beneficiario},
     ).scalar_one_or_none()
 
 
@@ -813,7 +841,7 @@ def beneficiarios_novo_caso_alto_custo(
     Descritivo — nunca um score clínico."""
     filtro = "AND b.id_contrato = :ctr" if id_contrato is not None else ""
     params: dict = {
-        "m": competencia, "lim": limiar, "base": limiar * baseline_frac,
+        "t": _t(session), "m": competencia, "lim": limiar, "base": limiar * baseline_frac,
         "ini": _menos_meses(competencia, meses_baseline),
     }
     if id_contrato is not None:
@@ -824,12 +852,12 @@ def beneficiarios_novo_caso_alto_custo(
             WITH atual AS (
                 SELECT ac.id_beneficiario, ac.despesa_liquida
                 FROM agg_beneficiario_competencia ac
-                WHERE ac.competencia = :m AND ac.despesa_liquida >= :lim
+                WHERE ac.tenant_id = :t AND ac.competencia = :m AND ac.despesa_liquida >= :lim
             ),
             base AS (
                 SELECT ac.id_beneficiario, MAX(ac.despesa_liquida) AS max_ant
                 FROM agg_beneficiario_competencia ac
-                WHERE ac.competencia < :m AND ac.competencia >= :ini
+                WHERE ac.tenant_id = :t AND ac.competencia < :m AND ac.competencia >= :ini
                 GROUP BY ac.id_beneficiario
             )
             SELECT b.id, b.codigo, b.id_contrato, a.despesa_liquida,
@@ -864,11 +892,11 @@ def recorrencia_beneficiarios_mes(
             SELECT b.id, b.codigo, COUNT(*) AS meses_com_evento
             FROM agg_beneficiario_competencia ac
             JOIN beneficiarios b ON b.id = ac.id_beneficiario
-            WHERE ac.eventos > 0 AND ac.competencia BETWEEN :ini AND :m
+            WHERE ac.tenant_id = :t AND ac.eventos > 0 AND ac.competencia BETWEEN :ini AND :m
             GROUP BY b.id, b.codigo
             """
         ),
-        {"m": competencia, "ini": inicio},
+        {"t": _t(session), "m": competencia, "ini": inicio},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -884,10 +912,10 @@ def eventos_pontuais_do_beneficiario(session: Session, id_beneficiario: int) -> 
                    (e.valor_apresentado - e.valor_glosado - e.valor_coparticipacao) AS despesa_liquida
             FROM eventos_assistenciais e
             JOIN procedimentos pr ON pr.id = e.id_procedimento
-            WHERE e.id_beneficiario = :b AND pr.perfil_utilizacao = 'pontual'
+            WHERE e.tenant_id = :t AND e.id_beneficiario = :b AND pr.perfil_utilizacao = 'pontual'
             ORDER BY e.data_evento
             """
         ),
-        {"b": id_beneficiario},
+        {"t": _t(session), "b": id_beneficiario},
     ).mappings().all()
     return [dict(r) for r in rows]

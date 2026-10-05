@@ -17,6 +17,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Index,
     JSON,
     BigInteger,
     Date,
@@ -31,7 +32,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.tenant import DEFAULT_TENANT
 from app.db.base import Base
 from app.models._mixins import TenantMixin
 
@@ -60,9 +60,7 @@ class AggSinistralidadeCompetencia(TenantMixin, Base):
     #   despesa_liquida  = despesa_bruta - glosas - coparticipacao  (base oficial do KPI p/ MVP)
     #   sinistralidade_bruta / _liquida = despesa_{bruta,liquida} / receita * 100
     # PK composta (tenant_id, competencia) — a única agg_* com PK natural (v1.2).
-    tenant_id: Mapped[str] = mapped_column(
-        String(40), primary_key=True, server_default=DEFAULT_TENANT, index=True
-    )
+    tenant_id: Mapped[str] = mapped_column(String(40), primary_key=True, index=True)
     competencia: Mapped[date] = mapped_column(Date, primary_key=True)
     receita: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
     despesa_bruta: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
@@ -137,6 +135,7 @@ class AggBeneficiarioCompetencia(TenantMixin, Base):
         UniqueConstraint(
             "tenant_id", "competencia", "id_beneficiario", name="uq_aggben_tenant_comp_ben"
         ),
+        Index("ix_aggben_tenant_beneficiario", "tenant_id", "id_beneficiario"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

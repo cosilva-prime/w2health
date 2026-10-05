@@ -2,7 +2,9 @@
 
 Camada fonte (OLTP-like): catálogos, carteira, eventos assistenciais, receitas.
 Camada analítica: agregações mensais, gabarito de cenários e manifesto do seed.
-Data Platform (v1.2): cadastro de tenants + controle de ingestão (estrutura, não uso).
+Data Platform (v1.2): controle de ingestão (estrutura, não uso).
+Control plane (Fundação SaaS V1, `ControlBase`): tenants, usuários, sessões, planos,
+features, branding, configurações, segredos e auditoria — `app/models/saas.py`.
 """
 
 from app.models.analytics import (
@@ -35,6 +37,21 @@ from app.models.platform import (
     SourceEntity,
     Tenant,
 )
+from app.models.saas import (
+    AuditLog,
+    AuthSession,
+    Feature,
+    Plan,
+    PlanFeature,
+    RefreshToken,
+    TenantBranding,
+    TenantBrandingAsset,
+    TenantFeature,
+    TenantSecret,
+    TenantSetting,
+    User,
+    UserTenant,
+)
 
 __all__ = [
     "RegraAlerta",
@@ -64,4 +81,18 @@ __all__ = [
     "PipelineRun",
     "DataQualityResult",
     "ReceitaContrato",
+    # Control plane — Fundação SaaS V1
+    "User",
+    "UserTenant",
+    "AuthSession",
+    "RefreshToken",
+    "Plan",
+    "Feature",
+    "PlanFeature",
+    "TenantFeature",
+    "TenantBranding",
+    "TenantBrandingAsset",
+    "TenantSetting",
+    "TenantSecret",
+    "AuditLog",
 ]

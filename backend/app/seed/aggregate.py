@@ -319,21 +319,30 @@ def rebuild_aggregations(session: Session, tenant_id: str = DEFAULT_TENANT) -> d
     session.flush()
 
     return {
-        "agg_sinistralidade_competencia": _count(session, "agg_sinistralidade_competencia"),
-        "agg_competencia_dimensao": _count(session, "agg_competencia_dimensao"),
-        "agg_prestador_competencia": _count(session, "agg_prestador_competencia"),
-        "agg_beneficiario_competencia": _count(session, "agg_beneficiario_competencia"),
-        "agg_contrato_competencia": _count(session, "agg_contrato_competencia"),
+        "agg_sinistralidade_competencia": _count(session, tenant_id, "agg_sinistralidade_competencia"),
+        "agg_competencia_dimensao": _count(session, tenant_id, "agg_competencia_dimensao"),
+        "agg_prestador_competencia": _count(session, tenant_id, "agg_prestador_competencia"),
+        "agg_beneficiario_competencia": _count(session, tenant_id, "agg_beneficiario_competencia"),
+        "agg_contrato_competencia": _count(session, tenant_id, "agg_contrato_competencia"),
     }
 
 
-def _count(session: Session, table: str) -> int:
-    return int(session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one())
+def _count(session: Session, tenant_id: str, table: str) -> int:
+    return int(session.execute(
+        text(f"SELECT COUNT(*) FROM {table} WHERE tenant_id = :t"), {"t": tenant_id}
+    ).scalar_one())
 
 
-if __name__ == "__main__":  # python -m app.seed.aggregate  -> só reconstrói agregações
-    from app.db.session import SessionLocal
+if __name__ == "__main__":  # python -m app.seed.aggregate [--tenant CODIGO]
+    import argparse
 
-    with SessionLocal() as s:
-        print(rebuild_aggregations(s))
+    from app.db.session import AdminSessionLocal
+    from app.db.tenant_scope import bind_tenant
+
+    ap = argparse.ArgumentParser(description="Reconstrói as agg_* de um tenant")
+    ap.add_argument("--tenant", default=DEFAULT_TENANT)
+    tenant = ap.parse_args().tenant
+    with AdminSessionLocal() as s:
+        bind_tenant(s, tenant)
+        print(rebuild_aggregations(s, tenant_id=tenant))
         s.commit()

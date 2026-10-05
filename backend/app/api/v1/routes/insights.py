@@ -1,4 +1,10 @@
-"""Insights automáticos + concentração + catálogos + metadados."""
+"""Insights automáticos + concentração + catálogos + metadados + transparência.
+
+Fundação SaaS V1: todas as rotas exigem `analytics:read` no tenant do contexto; insights
+exigem a feature `insights`; concentração exige o módulo da base pedida; catálogos são
+lidos SEMPRE filtrados pelo tenant; o gabarito de cenários (QA) só existe para tenants
+marcados como sintéticos.
+"""
 
 from __future__ import annotations
 
@@ -8,25 +14,30 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.analytics import beneficiaries
+from app.analytics import beneficiaries, transparency
 from app.analytics import insights as insights_mod
-from app.api.v1.routes._common import comparacao_dep, competencia_dep
-from app.db.session import get_db
+from app.api.v1.routes._common import analytics_guard, comparacao_dep, competencia_dep
+from app.db.tenant_scope import tenant_of
 from app.repositories import analytics_repo as repo
+from app.saas.feature_filters import BENEFICIARY, CONTRACT, PROVIDER, filter_insights
+from app.security.deps import TenantContext, get_tenant_context, get_tenant_db, require_feature
+from app.security.errors import ApiError
 
-router = APIRouter(tags=["Insights & Metadados"])
+router = APIRouter(tags=["Insights & Metadados"], dependencies=analytics_guard())
 
 
-@router.get("/analytics/insights", summary="Insights automáticos derivados dos dados")
+@router.get("/analytics/insights", summary="Insights automáticos derivados dos dados",
+            dependencies=[Depends(require_feature("insights"))])
 def insights(
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
     severidade: str | None = Query(None, description="alta|media|baixa|positiva|info"),
     tipo: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
-    itens = insights_mod.gerar(db, competencia, comparacao)
+    itens = filter_insights(insights_mod.gerar(db, competencia, comparacao), ctx.features)
     if severidade:
         itens = [i for i in itens if i["severidade"] == severidade]
     if tipo:
@@ -43,34 +54,53 @@ def insights(
 def concentracao(
     competencia: date = Depends(competencia_dep),
     base: str = Query("beneficiario", description="beneficiario|prestador"),
-    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
+    exigida = PROVIDER if base == "prestador" else BENEFICIARY
+    if not ctx.has_feature(exigida):
+        raise ApiError("feature_unavailable", extra={"feature": exigida})
     return beneficiaries.concentracao(db, competencia, base)
 
 
 @router.get("/analytics/gabarito", summary="Gabarito dos cenários sintéticos plantados (QA/demo)")
-def gabarito(db: Session = Depends(get_db)) -> dict:
+def gabarito(ctx: TenantContext = Depends(get_tenant_context),
+             db: Session = Depends(get_tenant_db)) -> dict:
+    if not ctx.is_synthetic:
+        raise ApiError("not_found")
     return {"itens": repo.gabarito(db)}
 
 
 @router.get("/meta/competencias", summary="Competências disponíveis na base analítica")
-def competencias(db: Session = Depends(get_db)) -> dict:
+def competencias(db: Session = Depends(get_tenant_db)) -> dict:
     cs = [c.isoformat() for c in repo.competencias(db)]
     return {"itens": cs, "primeira": cs[0] if cs else None, "ultima": cs[-1] if cs else None}
 
 
+@router.get("/meta/transparencia", summary="Procedência dos dados e definições dos indicadores")
+def meta_transparencia(ctx: TenantContext = Depends(get_tenant_context),
+                       db: Session = Depends(get_tenant_db)) -> dict:
+    return transparency.procedencia(db, is_synthetic=ctx.is_synthetic)
+
+
+# Catálogos: SQL fixo por nome (sem interpolação de entrada) e SEMPRE com tenant.
+_CATALOGOS: dict[str, tuple[str, str | None]] = {
+    "planos": ("SELECT id, nome FROM planos WHERE tenant_id = :t ORDER BY nome", None),
+    "contratos": (
+        "SELECT ct.id, ct.nome || ' (' || pl.nome || ')' AS nome FROM contratos ct "
+        "JOIN planos pl ON pl.id = ct.id_plano AND pl.tenant_id = ct.tenant_id "
+        "WHERE ct.tenant_id = :t ORDER BY ct.nome", CONTRACT),
+    "regioes": ("SELECT id, cidade || '/' || uf AS nome FROM regioes WHERE tenant_id = :t ORDER BY nome", None),
+    "especialidades": ("SELECT id, nome FROM especialidades WHERE tenant_id = :t ORDER BY nome", None),
+    "grupos-despesa": (
+        "SELECT DISTINCT grupo_procedimento AS id, grupo_procedimento AS nome FROM procedimentos "
+        "WHERE tenant_id = :t ORDER BY 1", None),
+}
+
+
 @router.get("/catalogos/{nome}", summary="Catálogos para filtros (planos, regioes, especialidades, ...)")
-def catalogos(nome: str, db: Session = Depends(get_db)) -> dict:
-    consultas = {
-        "planos": "SELECT id, nome FROM planos ORDER BY nome",
-        "contratos": "SELECT ct.id, ct.nome || ' (' || pl.nome || ')' AS nome "
-                     "FROM contratos ct JOIN planos pl ON pl.id = ct.id_plano ORDER BY ct.nome",
-        "regioes": "SELECT id, cidade || '/' || uf AS nome FROM regioes ORDER BY nome",
-        "especialidades": "SELECT id, nome FROM especialidades ORDER BY nome",
-        "grupos-despesa": "SELECT DISTINCT grupo_procedimento AS id, grupo_procedimento AS nome FROM procedimentos ORDER BY 1",
-        "faixas-etarias": None,
-        "dimensoes": None,
-    }
+def catalogos(nome: str, ctx: TenantContext = Depends(get_tenant_context),
+              db: Session = Depends(get_tenant_db)) -> dict:
     if nome == "faixas-etarias":
         from app.core.faixas import FAIXA_LABELS
 
@@ -79,8 +109,11 @@ def catalogos(nome: str, db: Session = Depends(get_db)) -> dict:
         from app.analytics.decomposition import DIMENSOES_VALIDAS
 
         return {"itens": [{"id": d, "nome": d} for d in DIMENSOES_VALIDAS]}
-    sql = consultas.get(nome)
-    if sql is None:
+    entrada = _CATALOGOS.get(nome)
+    if entrada is None:
         return {"itens": []}
-    rows = db.execute(text(sql)).mappings().all()
+    sql, feature = entrada
+    if feature is not None and not ctx.has_feature(feature):
+        raise ApiError("feature_unavailable", extra={"feature": feature})
+    rows = db.execute(text(sql), {"t": tenant_of(db)}).mappings().all()
     return {"itens": [dict(r) for r in rows]}

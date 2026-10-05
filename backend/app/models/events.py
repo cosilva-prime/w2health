@@ -28,6 +28,9 @@ class EventoAssistencial(TenantMixin, Base):
         Index("ix_evento_comp_prest", "competencia", "id_prestador"),
         Index("ix_evento_comp_proc", "competencia", "id_procedimento"),
         Index("ix_evento_comp_tipo", "competencia", "tipo_atendimento"),
+        # Fundação SaaS V1 — consultas sempre filtram tenant primeiro
+        Index("ix_eventos_tenant_competencia", "tenant_id", "competencia"),
+        Index("ix_eventos_tenant_beneficiario", "tenant_id", "id_beneficiario"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

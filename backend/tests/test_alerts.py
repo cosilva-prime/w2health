@@ -21,7 +21,7 @@ pytestmark = pytest.mark.scenarios
 
 
 @pytest.fixture
-def api(seeded_sessionmaker) -> TestClient:
+def api(seeded_sessionmaker, auth_headers) -> TestClient:
     app = create_app()
 
     def _get_db():
@@ -32,7 +32,7 @@ def api(seeded_sessionmaker) -> TestClient:
             s.close()
 
     app.dependency_overrides[get_db] = _get_db
-    return TestClient(app)
+    return TestClient(app, headers=auth_headers)  # V1 SaaS: rotas exigem autenticação
 
 
 # -------------------------------------------------------------------------- catálogo

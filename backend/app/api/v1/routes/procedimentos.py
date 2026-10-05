@@ -8,10 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.analytics import procedimentos as proc
-from app.api.v1.routes._common import comparacao_dep, competencia_dep
-from app.db.session import get_db
+from app.api.v1.routes._common import analytics_guard, comparacao_dep, competencia_dep
+from app.security.deps import get_tenant_db
 
-router = APIRouter(prefix="/analytics/procedimentos", tags=["Procedimentos"])
+router = APIRouter(
+    prefix="/analytics/procedimentos", tags=["Procedimentos"],
+    dependencies=analytics_guard("loss_ratio_intelligence"),
+)
 
 
 @router.get("", summary="Lista de procedimentos no mês (paginada)")
@@ -20,7 +23,7 @@ def lista(
     sort: str = Query("despesa"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     return proc.lista(db, competencia, sort, page, page_size)
 
@@ -30,7 +33,7 @@ def detalhe(
     id_procedimento: int,
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     try:
         return proc.detalhe(db, id_procedimento, competencia, comparacao)
@@ -43,6 +46,6 @@ def bridge(
     id_procedimento: int,
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     return proc.bridge(db, id_procedimento, competencia, comparacao)

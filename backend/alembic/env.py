@@ -1,4 +1,8 @@
-"""Ambiente do Alembic — usa a metadata dos modelos e a URL de app.core.config."""
+"""Ambiente do Alembic — metadatas do data plane + control plane; papel DONO do schema.
+
+Migrations sempre rodam com `DATABASE_ADMIN_URL` (dono das tabelas, cria papéis/políticas
+de RLS). A API roda com `DATABASE_URL` (papel `w2health_app`, sem privilégio de DDL).
+"""
 
 from logging.config import fileConfig
 
@@ -6,22 +10,22 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.core.config import get_settings
-from app.db.base import Base
-from app.models import *  # noqa: F401,F403  (registra todas as tabelas na metadata)
+from app.db.base import ALL_METADATA
+from app.models import *  # noqa: F401,F403  (registra todas as tabelas nas metadatas)
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+config.set_main_option("sqlalchemy.url", get_settings().admin_database_url.replace("%", "%%"))
 
-target_metadata = Base.metadata
+target_metadata = list(ALL_METADATA)
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=get_settings().database_url,
+        url=get_settings().admin_database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

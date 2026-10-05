@@ -14,11 +14,19 @@ from sqlalchemy.orm import Session
 
 from app.analytics import beneficiaries
 from app.analytics.periodo import parse_competencia
-from app.api.v1.routes._common import comparacao_dep, competencia_dep, contrato_id_dep
-from app.db.session import get_db
+from app.api.v1.routes._common import (
+    analytics_guard,
+    comparacao_dep,
+    competencia_dep,
+    contrato_id_dep,
+)
 from app.repositories import analytics_repo as repo
+from app.security.deps import get_tenant_db
 
-router = APIRouter(prefix="/analytics/beneficiarios", tags=["Beneficiários"])
+router = APIRouter(
+    prefix="/analytics/beneficiarios", tags=["Beneficiários"],
+    dependencies=analytics_guard("beneficiary_intelligence"),
+)
 
 
 def _resolve_id(db: Session, id_ou_codigo: str) -> int:
@@ -40,7 +48,7 @@ def lista(
     sexo: str | None = Query(None),
     id_plano: int | None = Query(None),
     id_contrato: int | None = Depends(contrato_id_dep),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     return beneficiaries.lista(
         db, competencia, page, page_size, faixa_etaria, sexo, id_plano, id_contrato
@@ -55,7 +63,7 @@ def novos_casos_alto_custo(
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
     id_contrato: int | None = Depends(contrato_id_dep),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     return beneficiaries.novos_casos_alto_custo(db, competencia, comparacao, contrato_id=id_contrato)
 
@@ -64,7 +72,7 @@ def novos_casos_alto_custo(
 def detalhe(
     id_ou_codigo: str,
     competencia: str | None = Query(None, description="AAAA-MM — referência do bloco de comportamento."),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     comp = parse_competencia(competencia) if competencia else None
     try:
@@ -74,7 +82,7 @@ def detalhe(
 
 
 @router.get("/{id_ou_codigo}/timeline", summary="Timeline assistencial simplificada")
-def timeline(id_ou_codigo: str, db: Session = Depends(get_db)) -> dict:
+def timeline(id_ou_codigo: str, db: Session = Depends(get_tenant_db)) -> dict:
     try:
         return beneficiaries.timeline(db, _resolve_id(db, id_ou_codigo))
     except ValueError as e:

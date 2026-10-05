@@ -319,7 +319,10 @@ def _serie_dim_evt(session: Session, dimensao: str, chave: str | None):
 
 def _chave_pneumologia(session: Session) -> str | None:
     from sqlalchemy import text
+
+    from app.db.tenant_scope import tenant_of
     r = session.execute(
-        text("SELECT id::text FROM especialidades WHERE codigo = 'PNEUMOLOGIA'")
+        text("SELECT id::text FROM especialidades WHERE tenant_id = :t AND codigo = 'PNEUMOLOGIA'"),
+        {"t": tenant_of(session)},
     ).scalar_one_or_none()
     return r

@@ -12,6 +12,12 @@ dependencies = [
     "alembic>=1.14,<2",
     "psycopg[binary]>=3.2,<4",
     "numpy>=2.1,<3",
+    "argon2-cffi>=23.1,<26",
+    "pyjwt>=2.9,<3",
+    "pyotp>=2.9,<3",
+    "segno>=1.6,<2",
+    "cryptography>=43,<47",
+    "python-multipart>=0.0.12,<0.1",
 ]
 
 [dependency-groups]
@@ -47,6 +53,11 @@ ignore = ["B008"]
 "app/seed/aggregate.py" = ["E501"]
 "app/analytics/*" = ["E501"]
 "app/api/*" = ["E501"]
+"app/saas/*" = ["E501"]
+"app/security/*" = ["E501"]
+"app/repositories/*" = ["E501"]
+"app/models/*" = ["E501"]
+"tests/*" = ["E501"]
 
 [tool.uv]
 package = false

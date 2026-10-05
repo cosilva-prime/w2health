@@ -1,0 +1,100 @@
+"""Row-Level Security — 2ª camada de isolamento (defesa em profundidade).
+
+Política única aplicada a TODA tabela do data plane (as que têm `tenant_id`):
+
+    ALTER TABLE t ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE t FORCE  ROW LEVEL SECURITY;        -- vale também para o dono não-superuser
+    CREATE POLICY tenant_isolation ON t
+        USING      (tenant_id = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+
+* `current_setting(..., true)` devolve NULL/'' quando nada foi definido → a igualdade nunca
+  é verdadeira → **zero linhas** (fail-closed). O valor é definido por transação em
+  `app.db.tenant_scope` (`set_config(..., true)`), nunca por sessão de conexão.
+* A API conecta com o papel `w2health_app`: NOSUPERUSER, NOBYPASSRLS, sem DDL, só os grants
+  mínimos (`GRANTS`). `audit_logs` é append-only para ele (sem UPDATE/DELETE).
+* Superusuários ignoram RLS por definição do PostgreSQL — por isso migrations/seed (papel
+  dono) são processos de linha de comando, nunca expostos por HTTP.
+
+A migration `e8b9c0d1f2a3` aplica exatamente estas instruções (cópia estática); os testes
+de RLS usam este módulo sobre um banco criado por `create_all`.
+"""
+
+from __future__ import annotations
+
+import re
+
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+
+from app.db.base import Base, ControlBase
+
+POLICY = "tenant_isolation"
+_EXPR = "tenant_id = current_setting('app.tenant_id', true)"
+_ROLE = re.compile(r"^[a-z_][a-z0-9_]{2,62}$")
+
+#: tabelas do data plane em que o papel de runtime também ESCREVE
+APP_WRITABLE_DATA_TABLES = frozenset({"regras_alerta"})
+#: control plane somente-inserção para o runtime (trilha imutável)
+APPEND_ONLY = frozenset({"audit_logs"})
+
+
+def data_plane_tables() -> list[str]:
+    return sorted(t.name for t in Base.metadata.sorted_tables if "tenant_id" in t.c)
+
+
+def control_plane_tables() -> list[str]:
+    return sorted(t.name for t in ControlBase.metadata.sorted_tables)
+
+
+def rls_statements(table: str) -> list[str]:
+    return [
+        f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
+        f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
+        f"DROP POLICY IF EXISTS {POLICY} ON {table}",
+        f"CREATE POLICY {POLICY} ON {table} USING ({_EXPR}) WITH CHECK ({_EXPR})",
+    ]
+
+
+def grant_statements(role: str, *, data_tables: list[str], control_tables: list[str]) -> list[str]:
+    if not _ROLE.match(role):
+        raise ValueError("nome de papel inválido")
+    out = [f"GRANT USAGE ON SCHEMA public TO {role}", f"GRANT SELECT ON competencias TO {role}"]
+    for t in data_tables:
+        privs = "SELECT, INSERT, UPDATE, DELETE" if t in APP_WRITABLE_DATA_TABLES else "SELECT"
+        out.append(f"GRANT {privs} ON {t} TO {role}")
+    for t in control_tables:
+        privs = "SELECT, INSERT" if t in APPEND_ONLY else "SELECT, INSERT, UPDATE, DELETE"
+        out.append(f"GRANT {privs} ON {t} TO {role}")
+    out.append(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role}")
+    return out
+
+
+def ensure_role(conn: Connection, role: str, password: str | None) -> None:
+    """Cria o papel de runtime se não existir (NOSUPERUSER NOBYPASSRLS). Sem senha → NOLOGIN."""
+    if not _ROLE.match(role):
+        raise ValueError("nome de papel inválido")
+    existe = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role}).first()
+    login = "LOGIN PASSWORD " + _literal(password) if password else "NOLOGIN"
+    attrs = "NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT"
+    if existe:
+        conn.execute(text(f"ALTER ROLE {role} {attrs}"))
+        if password:
+            conn.execute(text(f"ALTER ROLE {role} {login}"))
+    else:
+        conn.execute(text(f"CREATE ROLE {role} {login} {attrs}"))
+
+
+def _literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def apply_all(conn: Connection, role: str, password: str | None) -> None:
+    """Papel + grants + RLS em todas as tabelas do data plane (idempotente)."""
+    ensure_role(conn, role, password)
+    dados = data_plane_tables()
+    for stmt in grant_statements(role, data_tables=dados, control_tables=control_plane_tables()):
+        conn.execute(text(stmt))
+    for t in dados:
+        for stmt in rls_statements(t):
+            conn.execute(text(stmt))

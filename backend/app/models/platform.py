@@ -5,7 +5,8 @@
      (ver `data_platform/` e `docs/DATA_PLATFORM_ARCHITECTURE.md`);
   2. dar aos testes de isolamento algo concreto para validar.
 
-`Tenant` é o cadastro de clientes. As demais tabelas rastreiam cargas por tenant.
+`Tenant` é o cadastro de clientes — pertence ao **control plane** (`ControlBase`) desde a
+Fundação SaaS V1. As demais tabelas (data plane) rastreiam cargas por tenant.
 `ReceitaContrato` é o **layout preparado** para receita no grão de contrato — criado e
 documentado, mas **não populado nem lido pelo motor** nesta versão (receita por contrato
 depende de regra de negócio ainda não validada — ver `docs/DISCOVERY_GESTAO_SAUDE.md`).
@@ -13,6 +14,7 @@ depende de regra de negócio ainda não validada — ver `docs/DISCOVERY_GESTAO_
 
 from __future__ import annotations
 
+import uuid as uuid_mod
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -20,6 +22,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -27,23 +30,53 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, ControlBase
 from app.models._mixins import TenantMixin
 
 
-class Tenant(Base):
-    """Cadastro de clientes (operadoras). `id` é o slug usado em `tenant_id`."""
+class Tenant(ControlBase):
+    """Cadastro de clientes (operadoras) — control plane.
+
+    `id` é o **código** (slug) imutável do tenant e o valor gravado em `tenant_id` em todas
+    as tabelas do data plane (ex.: `w2h-demo`). `uuid` é o identificador público estável.
+    Decisão conservadora da Fundação SaaS V1: manter o slug como chave técnica evita
+    reescrever 24 colunas/~330 mil linhas — ver `docs/DATABASE_EVOLUTION_V1.md`.
+    """
 
     __tablename__ = "tenants"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ACTIVE', 'SUSPENDED', 'INACTIVE')", name="status_valido"
+        ),
+        CheckConstraint("id ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'", name="codigo_valido"),
+    )
 
-    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # slug, ex.: 'w2h-demo'
-    nome: Mapped[str] = mapped_column(String(120))
-    status: Mapped[str] = mapped_column(String(20), default="ativo")  # ativo | suspenso | onboarding
-    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # código/slug imutável
+    uuid: Mapped[uuid_mod.UUID] = mapped_column(
+        Uuid, unique=True, default=uuid_mod.uuid4, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    legal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", server_default="ACTIVE")
+    plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plans.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # Massa sintética (demonstração/testes) — exibido em toda a interface (transparência).
+    is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    @property
+    def code(self) -> str:
+        return self.id
 
 
 class SourceConnection(TenantMixin, Base):
@@ -54,7 +87,9 @@ class SourceConnection(TenantMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     source_system: Mapped[str] = mapped_column(String(60))  # rótulo livre do sistema de origem
     tipo: Mapped[str] = mapped_column(String(30))  # db_sql | api | arquivos | outro
-    config: Mapped[dict] = mapped_column(JSON, default=dict)  # sem segredos em claro
+    # Configuração NÃO sensível. Credenciais vão para `tenant_secrets` (cifradas) e aqui
+    # entram só como referência (`{"secret_ref": "<chave>"}`) — ver app/saas/secrets.py.
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

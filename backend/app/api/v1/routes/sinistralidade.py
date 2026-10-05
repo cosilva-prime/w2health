@@ -3,6 +3,10 @@
 v1.2: `explain`/`explain/{dim}/{chave}`/`.../causas` e `composicao` aceitam
 `?contrato_id=` (escopo de contrato, sem receita própria); novo `concentracao-variacao`
 traz a concentração do aumento de despesa líquida em poucos beneficiários (C1).
+
+Fundação SaaS V1: feature `loss_ratio_intelligence` no router; `financial_composition`,
+`advanced_explanations` e `beneficiary_intelligence` nas rotas que as expõem; respostas
+compostas saneadas por `feature_filters.sanitize` (os cálculos não mudam).
 """
 
 from __future__ import annotations
@@ -14,10 +18,20 @@ from sqlalchemy.orm import Session
 
 from app.analytics import cohorts, decomposition
 from app.analytics import sinistralidade as sin
-from app.api.v1.routes._common import comparacao_dep, competencia_dep, contrato_id_dep
-from app.db.session import get_db
+from app.api.v1.routes._common import (
+    analytics_guard,
+    comparacao_dep,
+    competencia_dep,
+    contrato_id_dep,
+    exigir_feature_da_dimensao,
+)
+from app.saas.feature_filters import sanitize
+from app.security.deps import TenantContext, get_tenant_context, get_tenant_db, require_feature
 
-router = APIRouter(prefix="/analytics/sinistralidade", tags=["Sinistralidade"])
+router = APIRouter(
+    prefix="/analytics/sinistralidade", tags=["Sinistralidade"],
+    dependencies=analytics_guard("loss_ratio_intelligence"),
+)
 
 _METODOS = ("bennet", "laspeyres")
 
@@ -32,19 +46,20 @@ def _metodo(metodo: str = Query("bennet", description="Método do bridge freq ×
 def indicador(
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     return sin.indicador(db, competencia, comparacao)
 
 
 @router.get("/evolucao", summary="Série mensal com sinistralidade, acumulado 12m e variações")
-def evolucao(db: Session = Depends(get_db)) -> dict:
+def evolucao(db: Session = Depends(get_tenant_db)) -> dict:
     return {"serie": sin.serie(db)}
 
 
 @router.get(
     "/composicao",
     summary="Composição financeira: bruta, glosas, coparticipação, líquida + decomposição",
+    dependencies=[Depends(require_feature("financial_composition"))],
 )
 def composicao(
     competencia: date = Depends(competencia_dep),
@@ -52,10 +67,12 @@ def composicao(
     contrato_id: int | None = Depends(contrato_id_dep),
     dimensao: str | None = Query(None, description="v1.2 — escopo de dimensão (com `chave`)."),
     chave: str | None = Query(None),
-    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     if dimensao is not None and dimensao not in decomposition.DIMENSOES_VALIDAS:
         raise HTTPException(422, f"dimensão inválida: {dimensao}")
+    exigir_feature_da_dimensao(ctx, dimensao)
     try:
         return sin.composicao(db, competencia, comparacao, dimensao, chave, contrato_id)
     except ValueError as e:
@@ -65,12 +82,13 @@ def composicao(
 @router.get(
     "/concentracao-variacao",
     summary="C1 — concentração do aumento de despesa líquida em poucos beneficiários",
+    dependencies=[Depends(require_feature("beneficiary_intelligence"))],
 )
 def concentracao_variacao(
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
     contrato_id: int | None = Depends(contrato_id_dep),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     res = decomposition.concentracao_variacao_beneficiarios(db, competencia, comparacao, contrato_id)
     if res is None:
@@ -85,13 +103,16 @@ def explain(
     contrato_id: int | None = Depends(contrato_id_dep),
     dimensao: str = Query("especialidade", description="Dimensão da decomposição."),
     metodo: str = Depends(_metodo),
-    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
+    exigir_feature_da_dimensao(ctx, dimensao)
     try:
-        return decomposition.explicar(db, competencia, comparacao, dimensao, metodo,
-                                      contrato_id=contrato_id)
+        res = decomposition.explicar(db, competencia, comparacao, dimensao, metodo,
+                                     contrato_id=contrato_id)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    return sanitize(res, ctx.features)
 
 
 @router.get(
@@ -105,20 +126,24 @@ def explain_drill(
     comparacao: str = Depends(comparacao_dep),
     contrato_id: int | None = Depends(contrato_id_dep),
     metodo: str = Depends(_metodo),
-    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
+    exigir_feature_da_dimensao(ctx, dimensao)
     try:
-        return decomposition.drill(db, competencia, dimensao, chave, comparacao, metodo,
-                                   contrato_id=contrato_id)
+        res = decomposition.drill(db, competencia, dimensao, chave, comparacao, metodo,
+                                  contrato_id=contrato_id)
     except KeyError as e:
         raise HTTPException(404, f"fator sem dados para {dimensao}={chave}") from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    return sanitize(res, ctx.features)
 
 
 @router.get(
     "/explain/{dimensao}/{chave}/causas",
     summary="Por que o fator mudou? Coortes de beneficiários com FATO/HIPÓTESE/A_INVESTIGAR",
+    dependencies=[Depends(require_feature("advanced_explanations"))],
 )
 def explain_causas(
     dimensao: str,
@@ -126,8 +151,13 @@ def explain_causas(
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
     contrato_id: int | None = Depends(contrato_id_dep),
-    db: Session = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_tenant_db),
 ) -> dict:
     if dimensao not in decomposition.DIMENSOES_VALIDAS:
         raise HTTPException(422, f"dimensão inválida: {dimensao}")
-    return cohorts.analisar_causas(db, dimensao, chave, competencia, comparacao, contrato_id)
+    exigir_feature_da_dimensao(ctx, dimensao)
+    return sanitize(
+        cohorts.analisar_causas(db, dimensao, chave, competencia, comparacao, contrato_id),
+        ctx.features,
+    )

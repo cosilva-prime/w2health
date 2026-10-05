@@ -78,8 +78,11 @@ class Catalogo:
 # Catálogos
 # ----------------------------------------------------------------------------------
 def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) -> Catalogo:
-    # Competências
+    # Competências — calendário GLOBAL: só insere as que faltam (vários tenants o compartilham)
+    existentes = set(session.execute(select(Competencia.competencia)).scalars())
     for m in cfg.competencias():
+        if m in existentes:
+            continue
         session.add(
             Competencia(
                 competencia=m,
@@ -705,8 +708,14 @@ def _bulk_insert(
     session.flush()
 
 
-def wipe_dados(session: Session) -> None:
-    """Limpa tudo (ordem respeita FKs). Não mexe em `alembic_version` nem em `tenants`."""
+def wipe_dados(session: Session, tenant_id: str) -> None:
+    """Limpa os dados de UM tenant (ordem respeita FKs).
+
+    Fundação SaaS V1: antes apagava todos os tenants; agora é tenant-scoped para permitir
+    semear vários tenants sintéticos lado a lado. Não mexe em `alembic_version`, no control
+    plane (tenants, usuários…), em `regras_alerta` (configuração do gestor) nem no
+    calendário global `competencias` (compartilhado).
+    """
     from app.models import AggContratoCompetencia, ReceitaContrato
 
     for model in (
@@ -714,7 +723,7 @@ def wipe_dados(session: Session) -> None:
         AggContratoCompetencia, AggSinistralidadeCompetencia, ReceitaContrato,
         EventoAssistencial, Receita, Beneficiario,
         Prestador, Procedimento, Diagnostico, Especialidade, Contrato, Plano,
-        Regiao, Competencia, CenarioGabarito, SeedManifest,
+        Regiao, CenarioGabarito, SeedManifest,
     ):
-        session.execute(delete(model))
+        session.execute(delete(model).where(model.tenant_id == tenant_id))
     session.flush()

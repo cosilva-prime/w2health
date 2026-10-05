@@ -2,6 +2,11 @@
 
     uv run python -m app.seed.run --beneficiarios 20000 --seed 42
     uv run python -m app.seed.run --beneficiarios 100000        # base cheia
+    uv run python -m app.seed.run --tenant w2h-demo-b --tenant-name "Operadora Horizonte" --seed 7
+
+Fundação SaaS V1: o seed é **tenant-scoped** — amarra o tenant à sessão (funciona com RLS
+forçado), apaga e regera somente os dados daquele tenant e marca o tenant como sintético.
+Roda com o papel DONO do schema (`DATABASE_ADMIN_URL`), nunca pela API.
 """
 
 from __future__ import annotations
@@ -13,7 +18,8 @@ from datetime import date, datetime
 import numpy as np
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.db.session import AdminSessionLocal
+from app.db.tenant_scope import bind_tenant
 from app.models import RegraAlerta, SeedManifest, Tenant
 from app.seed.aggregate import rebuild_aggregations
 from app.seed.config import SeedConfig
@@ -26,7 +32,10 @@ from app.seed.generator import (
 )
 
 
-def run_seed(cfg: SeedConfig, session: Session, *, verbose: bool = True) -> dict:
+def run_seed(
+    cfg: SeedConfig, session: Session, *, verbose: bool = True,
+    tenant_name: str = "Operadora Vida Plena",
+) -> dict:
     rng = np.random.default_rng(cfg.seed)
     t0 = time.perf_counter()
 
@@ -34,13 +43,17 @@ def run_seed(cfg: SeedConfig, session: Session, *, verbose: bool = True) -> dict
         if verbose:
             print(f"[seed +{time.perf_counter() - t0:6.1f}s] {msg}", flush=True)
 
-    log("limpando dados...")
-    wipe_dados(session)
+    bind_tenant(session, cfg.tenant_id)
+    # tenant do ambiente — upsert idempotente, sempre marcado como SINTÉTICO
+    tenant = session.get(Tenant, cfg.tenant_id)
+    if tenant is None:
+        session.add(Tenant(id=cfg.tenant_id, name=tenant_name, status="ACTIVE", is_synthetic=True))
+    else:
+        tenant.is_synthetic = True
+    session.flush()
 
-    # tenant do ambiente (v1.2) — upsert idempotente
-    if session.get(Tenant, cfg.tenant_id) is None:
-        session.add(Tenant(id=cfg.tenant_id, nome="W2Health Demo", status="ativo"))
-        session.flush()
+    log(f"limpando dados do tenant {cfg.tenant_id}...")
+    wipe_dados(session, cfg.tenant_id)
 
     log("catálogos...")
     cat = load_catalogos(session, cfg, rng)
@@ -115,7 +128,7 @@ def run_seed(cfg: SeedConfig, session: Session, *, verbose: bool = True) -> dict
 def _seed_regras_alerta_default(session: Session, tenant_id: str) -> None:
     """Regras de exemplo (v1.1 Etapa C + v1.2 C6) — inseridas só se a tabela estiver vazia,
     para NUNCA apagar configuração que o gestor já tenha criado/editado num reseed."""
-    if session.query(RegraAlerta).count() > 0:
+    if session.query(RegraAlerta).filter(RegraAlerta.tenant_id == tenant_id).count() > 0:
         return
     session.add_all(
         [
@@ -169,6 +182,8 @@ def main() -> None:
     p.add_argument("--fim", type=_parse_month, default="2026-12")
     p.add_argument("--escala", type=float, default=1.0, dest="escala_eventos")
     p.add_argument("--no-cenarios", action="store_true")
+    p.add_argument("--tenant", default=SeedConfig.tenant_id, help="código do tenant sintético")
+    p.add_argument("--tenant-name", default="Operadora Vida Plena")
     args = p.parse_args()
 
     cfg = SeedConfig(
@@ -178,9 +193,10 @@ def main() -> None:
         fim=args.fim if isinstance(args.fim, date) else _parse_month(args.fim),
         escala_eventos=args.escala_eventos,
         aplicar_cenarios=not args.no_cenarios,
+        tenant_id=args.tenant,
     )
-    with SessionLocal() as session:
-        run_seed(cfg, session)
+    with AdminSessionLocal() as session:
+        run_seed(cfg, session, tenant_name=args.tenant_name)
 
 
 if __name__ == "__main__":
