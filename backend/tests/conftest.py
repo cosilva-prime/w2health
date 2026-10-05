@@ -15,7 +15,15 @@ from __future__ import annotations
 import os
 import secrets
 
-import pytest
+# Chaves EFÊMERAS para a sessão de testes quando o ambiente não define (CI/container).
+# Precisam existir antes de `app.*` ser importado (configuração é cacheada).
+os.environ.setdefault("JWT_SECRET_KEY", secrets.token_urlsafe(48))
+if not os.environ.get("DATA_ENCRYPTION_KEY"):
+    from cryptography.fernet import Fernet
+
+    os.environ["DATA_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -162,6 +170,137 @@ def auth_headers(seeded_sessionmaker) -> dict[str, str]:
     """Cabeçalho Authorization de um MANAGER do tenant demo (todas as features: ENTERPRISE)."""
     with seeded_sessionmaker() as s:
         return {"Authorization": f"Bearer {token_for(s, 'manager@test.example', DEFAULT_TENANT)}"}
+
+
+# --------------------------------------------------------------------------------------
+# Banco de ISOLAMENTO (Fundação SaaS V1): dois tenants sintéticos com os MESMOS códigos de
+# negócio (BEN-000001, mesmos códigos de contrato/prestador/procedimento), RLS aplicado e
+# um papel de runtime de teste (NOSUPERUSER, NOBYPASSRLS). Separado do banco principal para
+# não alterar o invariante "um único tenant" verificado por test_multitenancy.py.
+# --------------------------------------------------------------------------------------
+TENANT_A, TENANT_B = "tenant-a", "tenant-b"
+ISO_USERS_A = {
+    "a.admin@iso.example": ("TENANT_ADMIN", None),
+    "a.manager@iso.example": ("MANAGER", None),
+    "a.viewer@iso.example": ("VIEWER", None),
+}
+ISO_USERS_B = {
+    "b.admin@iso.example": ("TENANT_ADMIN", None),
+    "b.manager@iso.example": ("MANAGER", None),
+}
+SUPERADMIN_EMAIL = "superadmin@iso.example"
+ISO_APP_ROLE = "w2health_app_test"
+
+
+@pytest.fixture(scope="session")
+def iso_env():
+    """SimpleNamespace(owner=sessionmaker dono, app=sessionmaker papel de runtime c/ RLS)."""
+    from types import SimpleNamespace
+
+    from sqlalchemy.engine import make_url
+
+    import app.models  # noqa: F401
+    from app.db import rls
+    from app.db.base import create_all
+    from app.seed.config import SeedConfig
+    from app.seed.run import run_seed
+
+    engine, url = recreate_database("w2health_test_iso")
+    create_all(engine)
+    senha_role = secrets.token_urlsafe(16)
+    with engine.begin() as c:
+        rls.apply_all(c, ISO_APP_ROLE, senha_role)
+    Owner = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    for code, nome, seed in ((TENANT_A, "Operadora A (sintética)", 42),
+                             (TENANT_B, "Operadora B (sintética)", 7)):
+        with Owner() as s:
+            run_seed(SeedConfig(n_beneficiarios=1500, seed=seed, tenant_id=code), s,
+                     verbose=False, tenant_name=nome)
+    with Owner() as s:
+        bootstrap_saas(s, TENANT_A, "ENTERPRISE", users=ISO_USERS_A)
+        bootstrap_saas(s, TENANT_B, "ENTERPRISE", users=ISO_USERS_B)
+        bootstrap_saas(s, TENANT_A, "ENTERPRISE", users={SUPERADMIN_EMAIL: (None, "SUPER_ADMIN")})
+
+    app_url = make_url(url).set(username=ISO_APP_ROLE, password=senha_role)
+    app_engine = create_engine(app_url, future=True)
+    AppMaker = sessionmaker(bind=app_engine, autoflush=False, expire_on_commit=False)
+    yield SimpleNamespace(owner=Owner, app=AppMaker, app_engine=app_engine)
+    app_engine.dispose()
+    engine.dispose()
+
+
+def make_client(maker, headers: dict | None = None) -> TestClient:
+    from app.db.session import get_db
+
+    application = create_app()
+
+    def _get_db():
+        s = maker()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    application.dependency_overrides[get_db] = _get_db
+    return TestClient(application, headers=headers or {})
+
+
+@pytest.fixture(params=["runtime_rls", "somente_aplicacao"])
+def iso_mode(request, iso_env):
+    """Roda o teste duas vezes: com o papel de runtime (aplicação + RLS) e com o papel
+    dono, que IGNORA RLS — provando que a camada de aplicação isola sozinha."""
+    return iso_env.app if request.param == "runtime_rls" else iso_env.owner
+
+
+@pytest.fixture
+def client_a(iso_env, iso_mode) -> TestClient:
+    with iso_env.owner() as s:
+        tok = token_for(s, "a.manager@iso.example", TENANT_A)
+    return make_client(iso_mode, {"Authorization": f"Bearer {tok}"})
+
+
+def create_user(iso_env, email: str, *, tenant: str | None = None, role: str | None = None,
+                platform_role: str | None = None, **attrs):
+    """Cria (ou recria limpo) um usuário de teste no banco de isolamento."""
+    from app.models import User, UserTenant
+    from app.security.passwords import hash_password
+
+    with iso_env.owner() as s:
+        antigo = s.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if antigo is not None:
+            s.delete(antigo)
+            s.flush()
+        u = User(email=email, name=email.split("@")[0], password_hash=hash_password(TEST_PASSWORD),
+                 platform_role=platform_role, **attrs)
+        s.add(u)
+        s.flush()
+        if tenant:
+            s.add(UserTenant(user_id=u.id, tenant_id=tenant, role=role))
+        s.commit()
+        return u.id
+
+
+def create_tenant(iso_env, code: str, *, status: str = "ACTIVE", plan: str = "ENTERPRISE") -> None:
+    from app.models import Plan, Tenant
+
+    with iso_env.owner() as s:
+        t = s.get(Tenant, code)
+        if t is None:
+            t = Tenant(id=code, name=f"Tenant {code}", is_synthetic=True)
+            s.add(t)
+        t.status = status
+        t.plan_id = s.execute(select(Plan.id).where(Plan.code == plan)).scalar_one()
+        s.commit()
+
+
+def login(client: TestClient, email: str, password: str | None = None, **extra):
+    return client.post("/api/auth/login", json={"email": email, "password": password or TEST_PASSWORD, **extra})
+
+
+def iso_client(iso_env, email: str, tenant: str | None, maker=None) -> TestClient:
+    with iso_env.owner() as s:
+        tok = token_for(s, email, tenant)
+    return make_client(maker or iso_env.app, {"Authorization": f"Bearer {tok}"})
 
 
 @pytest.fixture
