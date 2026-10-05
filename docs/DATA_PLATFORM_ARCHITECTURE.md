@@ -118,6 +118,6 @@ pode migrar de tecnologia sem alterar a API/frontend.
 
 ## 8. O que a v1.2 NÃO faz
 
-Não escolhe cloud, não roda orquestrador, não implementa RLS, não constrói conector,
+Não escolhe cloud, não roda orquestrador, não constrói conector (RLS no serving foi implementado na Fundação SaaS V1 — ver SECURITY_AND_TENANT_ISOLATION.md),
 não usa Kafka/streaming/Data Mesh. É a fundação para o **primeiro** cliente, não uma
 plataforma de Big Data para milhares.

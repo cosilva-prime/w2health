@@ -92,6 +92,10 @@ Ver [V1.2.md](V1.2.md). Resumo:
 - **Não implementado, por decisão explícita**: RLS/filtro de tenant nas queries (Fase 2),
   receita por contrato, conectores reais, reajuste, previsão.
 
+## V1 — Fundação SaaS  ✅
+
+Ver [V1_SAAS_FOUNDATION.md](V1_SAAS_FOUNDATION.md). Multi-tenancy real (TenantContext + filtro fail-closed + RLS), autenticação (argon2id, JWT, refresh rotativo), MFA TOTP, RBAC, planos/features/overrides, branding, configurações, cofre de segredos, auditoria, `/admin` e `/gestao`, design system, transparência, estados de UX. Testes: 125 → **237**. Próximos passos: [V1_ROADMAP.md](V1_ROADMAP.md).
+
 ## Roadmap (fora do escopo)
 
 **Reajuste contratual** (motor de simulação parametrizável — analisado, não

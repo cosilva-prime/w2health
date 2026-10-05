@@ -55,6 +55,8 @@ Resultado:
 
 ## Onde isso viveria
 
+> **V1**: a habilitação comercial de cada módulo já é feita por features (`FEATURE_CATALOG.md`). A prontidão de dados continua manual; a automação (`tenant_capabilities` alimentando overrides) está no roadmap P1.
+
 Na Fase 2, `source_entities` + uma tabela `tenant_capabilities` (tenant × capacidade ×
 estado × motivo) alimentada por uma checagem pós-carga. Na v1.2 é este documento + a
 avaliação manual no onboarding.

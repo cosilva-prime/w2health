@@ -1,5 +1,7 @@
 # Arquitetura — W2Health Intelligence
 
+> **Fundação SaaS V1 (2026-10):** autenticação, TenantContext, RBAC, features, RLS e administração implementados — ver [V1_SAAS_FOUNDATION.md](V1_SAAS_FOUNDATION.md) e [SECURITY_AND_TENANT_ISOLATION.md](SECURITY_AND_TENANT_ISOLATION.md). Onde este documento diz "sem autenticação" ou "Fase 2", vale o documento novo.
+
 > **v1.2**: introduzida a separação conceitual **Data Platform × Application Platform** e a
 > fundação multi-tenant. Ver [DATA_PLATFORM_ARCHITECTURE.md](DATA_PLATFORM_ARCHITECTURE.md),
 > [MULTI_TENANCY.md](MULTI_TENANCY.md) e [V1.2.md](V1.2.md). O documento abaixo descreve a
@@ -7,7 +9,7 @@
 >
 > - Toda tabela persistida tem `tenant_id` (mixin `app/models/_mixins.py`), exceto
 >   `competencias` e o cadastro `tenants`. Chaves de negócio = `(tenant_id, natural)`.
->   As consultas de leitura da API **ainda não filtram** por tenant (dívida — Fase 2: RLS).
+>   ~~As consultas não filtram por tenant~~ — **V1**: todas filtram (fail-closed) + RLS.
 > - Nova tabela analítica **`agg_contrato_competencia`** (Contract Intelligence).
 > - `app/models/platform.py`: cadastro de tenants + tabelas de controle de ingestão
 >   (estrutura, não uso).
@@ -99,7 +101,7 @@ seed e via `python -m app.seed.aggregate` / `make rebuild-agg`.
 
 ## Decisões e desvios registrados
 
-- **Sem autenticação** no MVP (decisão aprovada) — banner sempre visível.
+- ~~Sem autenticação no MVP~~ — **substituído na V1**: autenticação JWT + refresh rotativo, MFA, RBAC e TenantContext. O banner de dados sintéticos aparece quando o tenant é sintético.
 - **SWR** em vez de TanStack Query: dependência mínima, mesmo resultado para leitura. O
   planejamento citava TanStack como sugestão, não requisito.
 - **Dockerfile do backend** instala `requirements.txt` (exportado do `uv.lock`) com `pip`

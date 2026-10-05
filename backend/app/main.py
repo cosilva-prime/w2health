@@ -85,6 +85,10 @@ def create_app() -> FastAPI:
         ),
         version=settings.version,
         lifespan=lifespan,
+        # documentação interativa só fora de produção (reduz superfície exposta)
+        docs_url=None if settings.is_production_like else "/docs",
+        redoc_url=None if settings.is_production_like else "/redoc",
+        openapi_url=None if settings.is_production_like else "/openapi.json",
     )
 
     @app.middleware("http")

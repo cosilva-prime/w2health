@@ -1,5 +1,7 @@
 # Multi-tenancy — W2Health (v1.2)
 
+> **Fundação SaaS V1 (2026-10):** autenticação, TenantContext, RBAC, features, RLS e administração implementados — ver [V1_SAAS_FOUNDATION.md](V1_SAAS_FOUNDATION.md) e [SECURITY_AND_TENANT_ISOLATION.md](SECURITY_AND_TENANT_ISOLATION.md). Onde este documento diz "sem autenticação" ou "Fase 2", vale o documento novo.
+
 ## 1. Objetivo
 
 O W2Health será um SaaS com várias operadoras na mesma plataforma. Este documento define
@@ -59,9 +61,9 @@ serving na Fase 2; B e C como escalonamento.**
 | Seed carimba `tenant_id` (parametrizável via `SeedConfig.tenant_id`) | ✅ |
 | `app/core/tenant.py` — ponto único de resolução (hoje: constante `w2h-demo`) | ✅ |
 | Job de agregação tenant-scoped | ✅ |
-| Filtro `WHERE tenant_id` nas queries de leitura da API | ❌ **Fase 2** (RLS + middleware) |
-| RLS no PostgreSQL | ❌ **Fase 2** |
-| Autenticação / resolução de tenant por request | ❌ **Fase 2** (pré-requisito real) |
+| Filtro `WHERE tenant_id` nas queries de leitura da API | ✅ **V1** — fail-closed (`tenant_of`) |
+| RLS no PostgreSQL | ✅ **V1** — ENABLE+FORCE, papel `w2health_app` |
+| Autenticação / resolução de tenant por request | ✅ **V1** — JWT → vínculo → TenantContext |
 
 ## 6. LGPD / dados sensíveis (documentado, não implementado)
 
@@ -80,7 +82,7 @@ Dados de saúde são sensíveis (LGPD art. 11). Antes de qualquer cliente real:
 - **Backup** por tenant restaurável isoladamente.
 - **Telas** não exibem CPF/CNS sem necessidade; identificação por código anonimizado
   (já é assim no MVP).
-- **Controle por usuário/perfil** — Fase 2, junto com autenticação.
+- **Controle por usuário/perfil** — ✅ V1 (RBAC + features; ver RBAC_MATRIX.md).
 
 ## 7. Regra a partir da v1.2
 

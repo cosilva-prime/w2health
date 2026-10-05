@@ -9,8 +9,14 @@ entendo por quê — até o prestador e o beneficiário."*
 ```bash
 docker compose up -d --build
 docker compose exec backend python -m app.seed.run --beneficiarios 20000
-# abrir http://localhost:3000
+docker compose exec backend python -m app.saas.cli bootstrap-demo   # 1ª vez: anote as senhas
+# abrir http://localhost:3000/login e entrar como gestor@vidaplena.example
 ```
+
+(V1 SaaS) Para mostrar a plataforma: entre como `admin@vidaplena.example` → **Gestão do
+ambiente** (usuários, identidade visual, auditoria); com `make seed-tenant-b`, entre como
+`admin@horizonte.example` (plano BASIC) e mostre que Prestadores/Beneficiários não estão
+disponíveis — o bloqueio é do backend, não só do menu.
 
 Deixe o filtro **Competência = Julho/2026** e **Comparar com = mês anterior**.
 (A base é reprodutível — seed 42. Os números abaixo são estáveis com esse seed.)

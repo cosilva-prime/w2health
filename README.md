@@ -6,6 +6,11 @@ Plataforma que **identifica e explica automaticamente** as principais causas das
 da sinistralidade de uma operadora de saúde, correlacionando dados financeiros e
 assistenciais **até o nível de prestadores, procedimentos e beneficiários**.
 
+> 🔐 **Fundação SaaS V1:** multi-tenant real (aplicação + Row-Level Security), login com MFA,
+> RBAC, planos/features, branding por tenant, auditoria e áreas administrativas
+> (`/admin` Works2Data, `/gestao` do tenant). Ver [docs/V1_SAAS_FOUNDATION.md](docs/V1_SAAS_FOUNDATION.md)
+> e [docs/SECURITY_AND_TENANT_ISOLATION.md](docs/SECURITY_AND_TENANT_ISOLATION.md).
+
 > ⚠️ **Ambiente demonstrativo — todos os dados são sintéticos.** Nenhuma informação de
 > pessoa real é utilizada. Operadora fictícia: **Vida Plena**.
 
@@ -28,7 +33,12 @@ beneficiários responsáveis e gerar insights derivados matematicamente dos dado
 | Banco    | PostgreSQL 16 (camada fonte + camada analítica dimensional/agregada) |
 | Infra    | Docker + Docker Compose |
 
-Documentos: [v1.1 (última evolução)](docs/V1.1.md) · [MVP](docs/MVP.md) ·
+Documentos V1 SaaS: [Fundação](docs/V1_SAAS_FOUNDATION.md) · [Baseline](docs/V1_SAAS_BASELINE.md) ·
+[Segurança e isolamento](docs/SECURITY_AND_TENANT_ISOLATION.md) · [Threat model](docs/THREAT_MODEL_V1.md) ·
+[RBAC](docs/RBAC_MATRIX.md) · [Features](docs/FEATURE_CATALOG.md) ·
+[Evolução do banco](docs/DATABASE_EVOLUTION_V1.md) · [Roadmap V1](docs/V1_ROADMAP.md)
+
+Documentos anteriores: [v1.2](docs/V1.2.md) · [v1.1](docs/V1.1.md) · [MVP](docs/MVP.md) ·
 [Arquitetura](docs/ARCHITECTURE.md) ·
 [Modelo de dados](docs/DATA_MODEL.md) · [Motor analítico](docs/ANALYTICS_ENGINE.md) ·
 [Dados sintéticos](docs/SYNTHETIC_DATA.md) · [Backlog](docs/BACKLOG.md) ·
@@ -50,23 +60,31 @@ Documentos: [v1.1 (última evolução)](docs/V1.1.md) · [MVP](docs/MVP.md) ·
 
 ```bash
 git clone <repo> && cd w2health
-cp .env.example .env                 # opcional — há defaults no compose
+./scripts/gen-secrets.ps1            # cria .env com segredos ALEATÓRIOS (JWT, criptografia,
+                                     # senha do papel de runtime). Nunca versione o .env.
 
 docker compose up -d --build         # sobe postgres + backend + frontend
-                                     # o backend aplica as migrations no start
+                                     # o backend aplica as migrations no start (inclui RLS
+                                     # e o papel de banco w2health_app)
 
 docker compose exec backend python -m app.seed.run --beneficiarios 20000
-                                     # gera a massa sintética (~35 s, ~320 mil eventos)
+                                     # massa sintética "Operadora Vida Plena" (tenant w2h-demo)
+docker compose exec backend python -m app.saas.cli bootstrap-demo
+                                     # planos/features + usuários demo; senhas exibidas UMA vez
 ```
 
-Abra **http://localhost:3000**.
+Abra **http://localhost:3000/login**. Usuários demo: `admin@vidaplena.example`
+(administrador do tenant), `gestor@vidaplena.example`, `leitor@vidaplena.example`,
+`superadmin@works2data.example` (Works2Data — MFA obrigatório no primeiro login).
+Opcional: `make seed-tenant-b` cria um 2º tenant sintético (plano BASIC) com os mesmos
+códigos de negócio, para demonstrar isolamento e gating por plano.
 
 | Serviço  | URL |
 |----------|-----|
 | Frontend | http://localhost:3000 |
 | API      | http://localhost:8010/api/health |
-| Swagger  | http://localhost:8010/docs |
-| Postgres | `localhost:15432` — user/pass/db `w2health` |
+| Swagger  | http://localhost:8010/docs (desligado em produção/staging) |
+| Postgres | `127.0.0.1:15432` — dono `w2health`; a API usa o papel `w2health_app` (RLS) |
 
 ### Atalhos
 
@@ -108,7 +126,8 @@ docker compose exec backend python -m app.seed.run --beneficiarios 100000
 # sem os cenários intencionais (base "limpa")
 docker compose exec backend python -m app.seed.run --no-cenarios
 ```
-Reprodutível por `--seed`. O seed limpa e recria os dados e, ao final, reconstrói a
+Reprodutível por `--seed`. O seed é **por tenant** (`--tenant`, padrão `w2h-demo`): limpa e
+recria os dados só daquele tenant e, ao final, reconstrói a
 camada analítica (`agg_*`) e grava o `seed_manifest` e o `cenarios_gabarito`.
 
 ---

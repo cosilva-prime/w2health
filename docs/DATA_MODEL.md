@@ -2,6 +2,8 @@
 
 Fonte de verdade: `backend/app/models/`. Migrations: `backend/alembic/versions/`.
 
+> **Fundação SaaS V1**: control plane (`ControlBase`: tenants, users, user_tenants, auth_sessions, refresh_tokens, plans, features, plan_features, tenant_features, tenant_branding(_assets), tenant_settings, tenant_secrets, audit_logs), `tenant_id` sem default e RLS no data plane — ver [DATABASE_EVOLUTION_V1.md](DATABASE_EVOLUTION_V1.md). `tenants` passou a `id (código), uuid, name, legal_name, status ACTIVE|SUSPENDED|INACTIVE, plan_id, is_synthetic, created_at, updated_at`.
+
 > **v1.2** ([V1.2.md](V1.2.md)):
 > - **`tenant_id`** (`String(40)`, NOT NULL, indexado — mixin `app/models/_mixins.py`) em
 >   **todas** as tabelas persistidas, exceto `competencias` (calendário global) e `tenants`.
