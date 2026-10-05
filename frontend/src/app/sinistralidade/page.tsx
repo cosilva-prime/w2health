@@ -7,7 +7,8 @@ import { CausasPanel } from "@/components/CausasPanel";
 import { CompositionCard } from "@/components/CompositionCard";
 import { ConcentracaoBeneficiariosCard } from "@/components/ConcentracaoBeneficiariosCard";
 import { MiniSeries, WaterfallChart } from "@/components/charts";
-import { Card, DataState, EfeitoBadge, Stat } from "@/components/ui";
+import { KpiInfo } from "@/components/KpiInfo";
+import { Card, DataState, EfeitoBadge, PlanRestrictionNote, Stat } from "@/components/ui";
 import type { Bridge, Fator } from "@/lib/api";
 import { filtersQuery, useFilters } from "@/lib/filters";
 import { fmtBRL, fmtBRLCompact, fmtCompetencia, fmtNum, fmtPct, fmtPP, fmtSignedPct, LABEL_DIMENSAO } from "@/lib/format";
@@ -41,6 +42,7 @@ interface Drill {
     beneficiarios_maior_despesa: { id: number; rotulo: string; despesa: number; eventos: number }[];
     prestadores_maior_contribuicao_variacao: { id: number; rotulo: string; delta: number }[];
   };
+  restricoes_plano?: string[];
 }
 
 export default function SinistralidadePage() {
@@ -108,10 +110,10 @@ export default function SinistralidadePage() {
         <DataState isLoading={ind.isLoading && !ind.data} error={ind.error}>
           {ind.data && (
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Stat label={`Sinistralidade líquida — ${f.competencia ? fmtCompetencia(`${f.competencia}-01`) : ""}`} value={fmtPct(ind.data.sinistralidade_atual)} />
-              <Stat label="Sinistralidade bruta" value={fmtPct(ind.data.sinistralidade_bruta)} hint="despesa bruta / receita" />
+              <Stat label={`Sinistralidade líquida — ${f.competencia ? fmtCompetencia(`${f.competencia}-01`) : ""}`} value={fmtPct(ind.data.sinistralidade_atual)} info={<KpiInfo kpi="sinistralidade_liquida" />} />
+              <Stat label="Sinistralidade bruta" value={fmtPct(ind.data.sinistralidade_bruta)} hint="despesa bruta / receita" info={<KpiInfo kpi="sinistralidade_bruta" />} />
               <Stat label="Comparação (líquida)" value={fmtPct(ind.data.sinistralidade_comparacao)} hint={f.comparacao === "ano_anterior" ? "ano anterior" : "mês anterior"} />
-              <Stat label="Variação (líquida)" value={fmtPP(ind.data.variacao_pp)} />
+              <Stat label="Variação (líquida)" value={fmtPP(ind.data.variacao_pp)} info={<KpiInfo kpi="variacao_pp" />} />
             </div>
           )}
         </DataState>
@@ -282,6 +284,7 @@ function DrillPanel({
 
       <CausasPanel dimensao={dimensao} chave={drill.fator.chave} categoria={drill.fator.categoria} />
 
+      <PlanRestrictionNote restricoes={drill.restricoes_plano} />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Onde investigar primeiro — prestadores">
           <table className="w-full text-sm">

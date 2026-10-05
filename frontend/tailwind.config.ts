@@ -29,6 +29,12 @@ const config: Config = {
           600: "#b78c2c",
           700: "#8a6a1f",
         },
+        // Identidade do TENANT (white-label limitado): variáveis CSS definidas pelo
+        // ThemeProvider (lib/session.tsx::applyBranding) com cores hex validadas no backend.
+        tenant: {
+          primary: "var(--w2-primary)",
+          accent: "var(--w2-accent)",
+        },
         steel: {
           100: "#e2e9f2",
           300: "#a9bbd0",

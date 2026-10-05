@@ -1,4 +1,15 @@
-/** Cliente da API do W2Health Intelligence. */
+/**
+ * Cliente da API do W2Health Intelligence.
+ *
+ * Fundação SaaS V1 — segurança no transporte:
+ * - o access token (JWT curto) vive SÓ em memória (nunca em localStorage/sessionStorage);
+ * - o refresh token é um cookie httpOnly/SameSite=strict restrito a `/api/auth` — o JS
+ *   nunca o lê; `credentials: "include"` só é usado nas rotas de autenticação;
+ * - 401 dispara UMA renovação (promessa compartilhada); falhando, emite o evento
+ *   `w2h:session-expired` e o shell mostra o estado "Sessão expirada";
+ * - o frontend NÃO é autoridade de segurança: ele só melhora a UX. O backend revalida
+ *   tenant, papel, feature e escopo em toda requisição.
+ */
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8010/api";
@@ -7,63 +18,122 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    readonly code?: string,
+    readonly feature?: string,
   ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
-export async function apiGet<T = unknown>(path: string): Promise<T> {
+export const SESSION_EXPIRED_EVENT = "w2h:session-expired";
+
+let accessToken: string | null = null;
+let refreshing: Promise<boolean> | null = null;
+
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+export function hasAccessToken(): boolean {
+  return accessToken != null;
+}
+
+/** Renova o access token pelo cookie httpOnly. Uma única chamada em voo por vez. */
+export function refreshSession(): Promise<boolean> {
+  if (!refreshing) {
+    refreshing = (async () => {
+      try {
+        const r = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (!r.ok) {
+          accessToken = null;
+          return false;
+        }
+        const j = await r.json();
+        accessToken = j.access_token ?? null;
+        return accessToken != null;
+      } catch {
+        return false;
+      } finally {
+        setTimeout(() => {
+          refreshing = null;
+        }, 0);
+      }
+    })();
+  }
+  return refreshing;
+}
+
+async function toError(resp: Response): Promise<ApiError> {
+  let detail = `HTTP ${resp.status}`;
+  let code: string | undefined;
+  let feature: string | undefined;
+  try {
+    const j = await resp.json();
+    if (j?.detail) detail = typeof j.detail === "string" ? j.detail : "Requisição inválida.";
+    code = j?.code;
+    feature = j?.feature;
+  } catch {
+    /* corpo não-JSON */
+  }
+  return new ApiError(detail, resp.status, code, feature);
+}
+
+const AUTH_PATHS = ["/auth/login", "/auth/refresh", "/auth/logout", "/auth/mfa/verify",
+  "/auth/password/required-change", "/auth/mfa/confirm"];
+
+async function request<T>(path: string, init: RequestInit, retry = true): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "application/json");
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  const isAuth = AUTH_PATHS.some((p) => path.startsWith(p));
   let resp: Response;
   try {
     resp = await fetch(`${API_BASE_URL}${path}`, {
-      headers: { Accept: "application/json" },
+      ...init,
+      headers,
       cache: "no-store",
+      credentials: isAuth ? "include" : "same-origin",
     });
   } catch {
-    throw new ApiError(`Não foi possível conectar ao backend (${API_BASE_URL})`);
+    throw new ApiError("Não foi possível conectar ao serviço. Verifique sua conexão.", 0, "network");
   }
-  if (!resp.ok) {
-    let detail = `HTTP ${resp.status}`;
-    try {
-      const j = await resp.json();
-      if (j?.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(detail, resp.status);
+  if (resp.status === 401 && retry && !isAuth) {
+    if (await refreshSession()) return request<T>(path, init, false);
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
   }
+  if (!resp.ok) throw await toError(resp);
+  if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
 }
 
-/** POST/PUT/DELETE com corpo JSON — usado só pela tela de Configuração (v1.1, Etapa C). */
+export async function apiGet<T = unknown>(path: string): Promise<T> {
+  return request<T>(path, { method: "GET" });
+}
+
+/** POST/PUT/PATCH/DELETE com corpo JSON. */
 export async function apiSend<T = unknown>(
   path: string,
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   body?: unknown,
 ): Promise<T> {
-  let resp: Response;
-  try {
-    resp = await fetch(`${API_BASE_URL}${path}`, {
-      method,
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    throw new ApiError(`Não foi possível conectar ao backend (${API_BASE_URL})`);
-  }
-  if (!resp.ok) {
-    let detail = `HTTP ${resp.status}`;
-    try {
-      const j = await resp.json();
-      if (j?.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(detail, resp.status);
-  }
-  if (resp.status === 204) return undefined as T;
-  return (await resp.json()) as T;
+  return request<T>(path, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+/** Upload multipart (logo/favicon). O tipo é validado pelo backend pelos bytes. */
+export async function apiUpload<T = unknown>(path: string, file: File): Promise<T> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return request<T>(path, { method: "POST", body: fd });
 }
 
 export const qs = (params: Record<string, string | number | null | undefined>): string => {
@@ -72,6 +142,10 @@ export const qs = (params: Record<string, string | number | null | undefined>): 
   const s = p.toString();
   return s ? `?${s}` : "";
 };
+
+/** URL absoluta de um asset servido pela API (ex.: logo do tenant). */
+export const apiAssetUrl = (path: string | null | undefined): string | null =>
+  path ? `${API_BASE_URL}${path}` : null;
 
 // ------------------------------------------------------------------- tipos parciais
 export interface HealthResponse {

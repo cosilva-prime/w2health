@@ -4,7 +4,7 @@
 
 COMPOSE = docker compose
 
-.PHONY: help up down restart logs ps build test test-backend clean migrate seed seed-full rebuild-agg
+.PHONY: help up down restart logs ps build test test-backend clean migrate seed seed-full seed-tenant-b bootstrap rebuild-agg
 
 help:
 	@echo "up          - sobe todo o ambiente (build + start em background)"
@@ -14,6 +14,9 @@ help:
 	@echo "ps          - status dos serviços"
 	@echo "build       - rebuild das imagens"
 	@echo "test        - roda a suite de testes do backend (em container)"
+	@echo "seed        - massa sintética do tenant demo (Operadora Vida Plena)"
+	@echo "seed-tenant-b - 2º tenant sintético (mesmos códigos de negócio — isolamento)"
+	@echo "bootstrap   - catálogo de planos/features + usuários demo (senhas exibidas uma vez)"
 	@echo "clean       - down + remove volumes (apaga o banco)"
 
 up:
@@ -47,8 +50,14 @@ seed:
 seed-full:
 	$(COMPOSE) exec backend python -m app.seed.run --beneficiarios 100000
 
+seed-tenant-b:
+	$(COMPOSE) exec backend python -m app.seed.run --tenant w2h-demo-b --tenant-name "Operadora Horizonte" --beneficiarios 5000 --seed 7
+
+bootstrap:
+	$(COMPOSE) exec backend python -m app.saas.cli bootstrap-demo
+
 rebuild-agg:
-	$(COMPOSE) exec backend python -m app.seed.aggregate
+	$(COMPOSE) exec backend python -m app.seed.aggregate --tenant w2h-demo
 
 clean:
 	$(COMPOSE) down -v

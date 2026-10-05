@@ -5,7 +5,8 @@ import Link from "next/link";
 import { CompositionCard } from "@/components/CompositionCard";
 import { EvolutionChart } from "@/components/charts";
 import { InsightChip } from "@/components/InsightCard";
-import { Card, DataState, EfeitoBadge, Stat } from "@/components/ui";
+import { KpiInfo } from "@/components/KpiInfo";
+import { Card, DataState, EfeitoBadge, PlanRestrictionNote, Stat } from "@/components/ui";
 import type { Fator, Insight } from "@/lib/api";
 import { filtersQuery, useFilters } from "@/lib/filters";
 import { fmtBRL, fmtBRLCompact, fmtNum, fmtPct, fmtPP } from "@/lib/format";
@@ -27,6 +28,7 @@ interface Overview {
   decomposicao_receita_despesa: { efeito_despesa_pp: number; efeito_receita_pp: number } | null;
   serie: { competencia: string; sinistralidade: number; acumulado_12m: number | null }[];
   principais_fatores_atencao: Insight[];
+  restricoes_plano?: string[];
 }
 
 interface Explain {
@@ -66,13 +68,15 @@ export default function VisaoExecutivaPage() {
                 invertColors
                 hint={f.comparacao === "ano_anterior" ? "vs ano anterior" : "vs mês anterior"}
                 href={`/sinistralidade${q}`}
+                info={<KpiInfo kpi="sinistralidade_liquida" />}
               />
-              <Stat label="Receita de contraprestações" value={fmtBRLCompact(k.receita)} />
-              <Stat label="Despesa assistencial" value={fmtBRLCompact(k.despesa)} />
-              <Stat label="Beneficiários" value={fmtNum(k.beneficiarios)} />
+              <Stat label="Receita de contraprestações" value={fmtBRLCompact(k.receita)} info={<KpiInfo kpi="receita" />} />
+              <Stat label="Despesa assistencial" value={fmtBRLCompact(k.despesa)} info={<KpiInfo kpi="despesa_liquida" />} />
+              <Stat label="Beneficiários" value={fmtNum(k.beneficiarios)} info={<KpiInfo kpi="beneficiarios" />} />
               <Stat
                 label="Custo assistencial / beneficiário"
                 value={fmtBRL(k.custo_assistencial_por_beneficiario, true)}
+                info={<KpiInfo kpi="custo_pmpm" />}
               />
               <Stat
                 label="Receita média / beneficiário"
@@ -81,6 +85,7 @@ export default function VisaoExecutivaPage() {
               <Stat
                 label="Sinistralidade — 12 meses"
                 value={k.acumulado_12m != null ? fmtPct(k.acumulado_12m) : "—"}
+                info={<KpiInfo kpi="acumulado_12m" />}
               />
               <Stat
                 label="Variação vs ano anterior"
@@ -107,6 +112,7 @@ export default function VisaoExecutivaPage() {
             </Card>
 
             <Card title="Principais fatores de atenção">
+              <PlanRestrictionNote restricoes={ov.data!.restricoes_plano} />
               <div className="grid gap-2 sm:grid-cols-2">
                 {ov.data!.principais_fatores_atencao.map((i) => (
                   <InsightChip key={i.id} insight={i} />

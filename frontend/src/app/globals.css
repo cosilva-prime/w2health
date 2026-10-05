@@ -4,6 +4,9 @@
 
 :root {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Identidade padrão W2Health · Works2Data; o branding do tenant sobrescreve em runtime. */
+  --w2-primary: #0b1b32;
+  --w2-accent: #d3a63e;
 }
 
 html,

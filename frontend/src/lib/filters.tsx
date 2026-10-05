@@ -17,12 +17,24 @@ export interface GlobalFilters {
 
 const Ctx = createContext<GlobalFilters | null>(null);
 
-export function FiltersProvider({ children }: { children: React.ReactNode }) {
+export function FiltersProvider({
+  children,
+  enabled = true,
+  defaultComparacao = "mes_anterior",
+}: {
+  children: React.ReactNode;
+  /** false quando não há tenant ativo (ex.: área de plataforma) — não consulta dados. */
+  enabled?: boolean;
+  /** preferência do tenant (`analysis.default_comparison`). */
+  defaultComparacao?: string;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
 
-  const { data } = useApi<{ itens: string[]; ultima: string | null }>("/meta/competencias");
+  const { data } = useApi<{ itens: string[]; ultima: string | null }>(
+    enabled ? "/meta/competencias" : null,
+  );
   const competencias = useMemo(
     () => (data?.itens ?? []).map((c) => c.slice(0, 7)),
     [data],
@@ -30,7 +42,7 @@ export function FiltersProvider({ children }: { children: React.ReactNode }) {
   const ultima = data?.ultima ? data.ultima.slice(0, 7) : null;
 
   const competencia = params.get("competencia") ?? ultima;
-  const comparacao = params.get("comparacao") ?? "mes_anterior";
+  const comparacao = params.get("comparacao") ?? defaultComparacao;
   const contratoId = params.get("contrato_id");
 
   const push = useCallback(

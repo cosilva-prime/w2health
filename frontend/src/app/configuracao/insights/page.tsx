@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Badge, Card, DataState } from "@/components/ui";
 import { apiSend } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import { corSeveridade } from "@/lib/format";
 import { useApi } from "@/lib/useApi";
 
@@ -51,6 +52,7 @@ const FORM_VAZIO = {
 };
 
 export default function ConfiguracaoInsightsPage() {
+  const podeEditar = useSession().can("alert_rules:write");
   const catalogo = useApi<{ itens: Record<string, IndicadorDef[]> }>("/config/indicadores");
   const regras = useApi<Regra[]>("/config/regras-alerta");
   const [form, setForm] = useState(FORM_VAZIO);
@@ -119,6 +121,12 @@ export default function ConfiguracaoInsightsPage() {
         </p>
       </Card>
 
+      {!podeEditar && (
+        <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+          Seu perfil permite apenas consultar as regras. A criação e a edição são feitas por gestores.
+        </p>
+      )}
+      {podeEditar && (
       <Card title={form.id ? `Editando regra #${form.id}` : "Nova regra de alerta"}>
         <form onSubmit={salvar} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="flex flex-col gap-1 text-xs text-slate-500">
@@ -211,6 +219,7 @@ export default function ConfiguracaoInsightsPage() {
           </div>
         </form>
       </Card>
+      )}
 
       <Card title={`Regras cadastradas (${regras.data?.length ?? 0})`}>
         <DataState isLoading={regras.isLoading && !regras.data} error={regras.error} empty={!regras.data?.length}>
@@ -241,6 +250,7 @@ export default function ConfiguracaoInsightsPage() {
                     </td>
                     <td className="py-2">
                       <button
+                        disabled={!podeEditar}
                         onClick={() => alternarAtivo(r)}
                         className={`rounded-full px-2 py-0.5 text-xs ${r.ativo ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
                       >
@@ -248,8 +258,12 @@ export default function ConfiguracaoInsightsPage() {
                       </button>
                     </td>
                     <td className="py-2 text-right">
-                      <button onClick={() => editar(r)} className="mr-2 text-xs text-brand-600 hover:underline">editar</button>
-                      <button onClick={() => excluir(r)} className="text-xs text-rose-600 hover:underline">excluir</button>
+                      {podeEditar && (
+                        <>
+                          <button onClick={() => editar(r)} className="mr-2 text-xs text-brand-600 hover:underline">editar</button>
+                          <button onClick={() => excluir(r)} className="text-xs text-rose-600 hover:underline">excluir</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
