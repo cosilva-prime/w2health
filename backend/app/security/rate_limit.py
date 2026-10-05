@@ -1,25 +1,43 @@
-"""Limitador simples de tentativas por chave (IP) em janela deslizante de 60 s.
+"""Limitador de tentativas — interface + adapters (sem acoplamento à memória do processo).
 
-Complementa o bloqueio por conta (`users.failed_login_count/locked_until`). É EM MEMÓRIA:
-vale por processo — suficiente para uma instância; com várias réplicas precisa de um
-backend compartilhado (Redis) — registrado como P1 em docs/V1_ROADMAP.md.
+* `RateLimiter` (protocolo): `hit(key) -> bool`, `reset()`.
+* `DatabaseRateLimiter` — PADRÃO: janela fixa de 60 s numa tabela do control plane
+  (`auth_rate_limits`); compartilhado entre processos e réplicas da API. A chave é o
+  SHA-256 do identificador (IP) — o IP em claro não é persistido.
+* `InMemoryRateLimiter` — só por processo (testes/dev isolado).
+* Produção com tráfego alto: adapter Redis (`INCR` + `EXPIRE` na chave da janela)
+  implementando o mesmo protocolo — documentado em docs/SECURITY_AND_TENANT_ISOLATION.md.
 """
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
+
+from sqlalchemy import text
+
+log = logging.getLogger(__name__)
 
 
-class SlidingWindowLimiter:
+class RateLimiter(Protocol):
+    limit: int
+
+    def hit(self, key: str) -> bool: ...
+    def reset(self) -> None: ...
+
+
+class InMemoryRateLimiter:
     def __init__(self, limit_per_minute: int) -> None:
         self.limit = limit_per_minute
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
 
     def hit(self, key: str) -> bool:
-        """Registra uma tentativa. True = permitida; False = excedeu o limite."""
         agora = time.monotonic()
         with self._lock:
             q = self._hits[key]
@@ -33,3 +51,56 @@ class SlidingWindowLimiter:
     def reset(self) -> None:
         with self._lock:
             self._hits.clear()
+
+
+#: compatibilidade com o nome usado na Fase 1
+SlidingWindowLimiter = InMemoryRateLimiter
+
+_UPSERT = text("""
+    INSERT INTO auth_rate_limits (key, window_start, hits) VALUES (:k, :w, 1)
+    ON CONFLICT (key, window_start) DO UPDATE SET hits = auth_rate_limits.hits + 1
+    RETURNING hits
+""")
+
+
+class DatabaseRateLimiter:
+    """Janela fixa por minuto. Falha do banco = permite (fail-open) e registra — o bloqueio
+    por conta (`users.locked_until`) continua protegendo contra força bruta."""
+
+    def __init__(self, limit_per_minute: int, engine_factory) -> None:
+        self.limit = limit_per_minute
+        self._engine_factory = engine_factory
+        self._ultimo_expurgo = 0.0
+
+    @staticmethod
+    def _key(key: str) -> str:
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    def hit(self, key: str) -> bool:
+        agora = datetime.now(UTC)
+        janela = agora.replace(second=0, microsecond=0)
+        try:
+            with self._engine_factory().begin() as conn:
+                hits = conn.execute(_UPSERT, {"k": self._key(key), "w": janela}).scalar_one()
+                if time.monotonic() - self._ultimo_expurgo > 300:
+                    conn.execute(text("DELETE FROM auth_rate_limits WHERE window_start < :c"),
+                                 {"c": janela - timedelta(minutes=10)})
+                    self._ultimo_expurgo = time.monotonic()
+            return hits <= self.limit
+        except Exception:  # noqa: BLE001
+            log.exception("rate limit indisponível — liberando tentativa")
+            return True
+
+    def reset(self) -> None:
+        with self._engine_factory().begin() as conn:
+            conn.execute(text("DELETE FROM auth_rate_limits"))
+
+
+def build_limiter(backend: str, limit: int) -> RateLimiter:
+    if backend == "memory":
+        return InMemoryRateLimiter(limit)
+    if backend == "database":
+        from app.db.session import get_engine
+
+        return DatabaseRateLimiter(limit, get_engine)
+    raise ValueError(f"RATE_LIMIT_BACKEND desconhecido: {backend}")

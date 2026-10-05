@@ -34,7 +34,19 @@ _EXPR = "tenant_id = current_setting('app.tenant_id', true)"
 _ROLE = re.compile(r"^[a-z_][a-z0-9_]{2,62}$")
 
 #: tabelas do data plane em que o papel de runtime também ESCREVE
-APP_WRITABLE_DATA_TABLES = frozenset({"regras_alerta"})
+APP_WRITABLE_DATA_TABLES = frozenset({"regras_alerta", "capability_readiness"})
+#: escrita do runtime sem DELETE (cadastro de fontes pela administração)
+APP_INSERT_UPDATE_DATA_TABLES = frozenset({"source_connections"})
+
+#: data plane que o PIPELINE escreve (canônico/Silver + Gold + metadados operacionais)
+PIPELINE_WRITABLE = frozenset({
+    "regioes", "planos", "contratos", "especialidades", "procedimentos", "prestadores",
+    "diagnosticos", "beneficiarios", "receitas", "eventos_assistenciais",
+    "agg_sinistralidade_competencia", "agg_competencia_dimensao", "agg_prestador_competencia",
+    "agg_beneficiario_competencia", "agg_contrato_competencia",
+    "ingestion_runs", "raw_objects", "pipeline_runs", "data_quality_results",
+    "reconciliation_results", "capability_readiness",
+})
 #: control plane somente-inserção para o runtime (trilha imutável)
 APPEND_ONLY = frozenset({"audit_logs"})
 
@@ -61,12 +73,32 @@ def grant_statements(role: str, *, data_tables: list[str], control_tables: list[
         raise ValueError("nome de papel inválido")
     out = [f"GRANT USAGE ON SCHEMA public TO {role}", f"GRANT SELECT ON competencias TO {role}"]
     for t in data_tables:
-        privs = "SELECT, INSERT, UPDATE, DELETE" if t in APP_WRITABLE_DATA_TABLES else "SELECT"
+        if t in APP_WRITABLE_DATA_TABLES:
+            privs = "SELECT, INSERT, UPDATE, DELETE"
+        elif t in APP_INSERT_UPDATE_DATA_TABLES:
+            privs = "SELECT, INSERT, UPDATE"
+        else:
+            privs = "SELECT"
         out.append(f"GRANT {privs} ON {t} TO {role}")
     for t in control_tables:
         privs = "SELECT, INSERT" if t in APPEND_ONLY else "SELECT, INSERT, UPDATE, DELETE"
         out.append(f"GRANT {privs} ON {t} TO {role}")
     out.append(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role}")
+    return out
+
+
+def pipeline_grant_statements(role: str) -> list[str]:
+    """Privilégios mínimos do papel de pipeline (mesmos da migration f4c5d6e7a8b9)."""
+    if not _ROLE.match(role):
+        raise ValueError("nome de papel inválido")
+    out = [f"GRANT USAGE ON SCHEMA public TO {role}", f"GRANT SELECT, INSERT ON competencias TO {role}"]
+    out += [f"GRANT SELECT, INSERT, UPDATE, DELETE ON {t} TO {role}" for t in sorted(PIPELINE_WRITABLE)]
+    out += [f"GRANT SELECT, UPDATE ON source_connections TO {role}",
+            f"GRANT SELECT ON source_entities, tenants TO {role}",
+            f"GRANT SELECT, INSERT, UPDATE ON tenant_onboarding TO {role}",
+            f"GRANT INSERT ON audit_logs TO {role}",
+            f"GRANT SELECT (id, occurred_at) ON audit_logs TO {role}",
+            f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role}"]
     return out
 
 
@@ -87,6 +119,12 @@ def ensure_role(conn: Connection, role: str, password: str | None) -> None:
 
 def _literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def apply_pipeline_role(conn: Connection, role: str, password: str | None) -> None:
+    ensure_role(conn, role, password)
+    for stmt in pipeline_grant_statements(role):
+        conn.execute(text(stmt))
 
 
 def apply_all(conn: Connection, role: str, password: str | None) -> None:

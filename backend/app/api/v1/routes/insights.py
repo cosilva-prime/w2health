@@ -20,7 +20,13 @@ from app.api.v1.routes._common import analytics_guard, comparacao_dep, competenc
 from app.db.tenant_scope import tenant_of
 from app.repositories import analytics_repo as repo
 from app.saas.feature_filters import BENEFICIARY, CONTRACT, PROVIDER, filter_insights
-from app.security.deps import TenantContext, get_tenant_context, get_tenant_db, require_feature
+from app.security.deps import (
+    TenantContext,
+    feature_error,
+    get_tenant_context,
+    get_tenant_db,
+    require_feature,
+)
 from app.security.errors import ApiError
 
 router = APIRouter(tags=["Insights & Metadados"], dependencies=analytics_guard())
@@ -59,7 +65,7 @@ def concentracao(
 ) -> dict:
     exigida = PROVIDER if base == "prestador" else BENEFICIARY
     if not ctx.has_feature(exigida):
-        raise ApiError("feature_unavailable", extra={"feature": exigida})
+        raise feature_error(ctx, exigida)
     return beneficiaries.concentracao(db, competencia, base)
 
 
@@ -114,6 +120,6 @@ def catalogos(nome: str, ctx: TenantContext = Depends(get_tenant_context),
         return {"itens": []}
     sql, feature = entrada
     if feature is not None and not ctx.has_feature(feature):
-        raise ApiError("feature_unavailable", extra={"feature": feature})
+        raise feature_error(ctx, feature)
     rows = db.execute(text(sql), {"t": tenant_of(db)}).mappings().all()
     return {"itens": [dict(r) for r in rows]}

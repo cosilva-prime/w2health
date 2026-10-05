@@ -1,0 +1,31 @@
+cod_prestador;razao_social;tipo;municipio;uf;cod_especialidade_principal
+PR-0001;Prestador Fictício 01;clinica;Campinas;SP;ESP-CARD
+PR-0002;Prestador Fictício 02;laboratorio;Belo Horizonte;MG;ESP-ORTO
+PR-0003;Prestador Fictício 03;pronto_atendimento;São Paulo;SP;ESP-PED
+PR-0004;Prestador Fictício 04;consultorio;Campinas;SP;ESP-GINE
+PR-0005;Prestador Fictício 05;hospital;Belo Horizonte;MG;ESP-ONCO
+PR-0006;Prestador Fictício 06;clinica;São Paulo;SP;ESP-IMG
+PR-0007;Prestador Fictício 07;laboratorio;Campinas;SP;ESP-LAB
+PR-0008;Prestador Fictício 08;pronto_atendimento;Belo Horizonte;MG;ESP-FISIO
+PR-0009;Prestador Fictício 09;consultorio;São Paulo;SP;ESP-CIRG
+PR-0010;Prestador Fictício 10;hospital;Campinas;SP;ESP-CLIN
+PR-0011;Prestador Fictício 11;clinica;Belo Horizonte;MG;ESP-CARD
+PR-0012;Prestador Fictício 12;laboratorio;São Paulo;SP;ESP-ORTO
+PR-0013;Prestador Fictício 13;pronto_atendimento;Campinas;SP;ESP-PED
+PR-0014;Prestador Fictício 14;consultorio;Belo Horizonte;MG;ESP-GINE
+PR-0015;Prestador Fictício 15;hospital;São Paulo;SP;ESP-ONCO
+PR-0016;Prestador Fictício 16;clinica;Campinas;SP;ESP-IMG
+PR-0017;Prestador Fictício 17;laboratorio;Belo Horizonte;MG;ESP-LAB
+PR-0018;Prestador Fictício 18;pronto_atendimento;São Paulo;SP;ESP-FISIO
+PR-0019;Prestador Fictício 19;consultorio;Campinas;SP;ESP-CIRG
+PR-0020;Prestador Fictício 20;hospital;Belo Horizonte;MG;ESP-CLIN
+PR-0021;Prestador Fictício 21;clinica;São Paulo;SP;ESP-CARD
+PR-0022;Prestador Fictício 22;laboratorio;Campinas;SP;ESP-ORTO
+PR-0023;Prestador Fictício 23;pronto_atendimento;Belo Horizonte;MG;ESP-PED
+PR-0024;Prestador Fictício 24;consultorio;São Paulo;SP;ESP-GINE
+PR-0025;Prestador Fictício 25;hospital;Campinas;SP;ESP-ONCO
+PR-0026;Prestador Fictício 26;clinica;Belo Horizonte;MG;ESP-IMG
+PR-0027;Prestador Fictício 27;laboratorio;São Paulo;SP;ESP-LAB
+PR-0028;Prestador Fictício 28;pronto_atendimento;Campinas;SP;ESP-FISIO
+PR-0029;Prestador Fictício 29;consultorio;Belo Horizonte;MG;ESP-CIRG
+PR-0030;Prestador Fictício 30;hospital;São Paulo;SP;ESP-CLIN

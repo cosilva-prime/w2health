@@ -1,0 +1,21 @@
+cod_procedimento;descricao;cod_especialidade;grupo;perfil
+P-1001;Consulta clínica eletiva;ESP-CLIN;Consultas;recorrente
+P-1002;Consulta cardiológica;ESP-CARD;Consultas;recorrente
+P-1003;Consulta ortopédica;ESP-ORTO;Consultas;recorrente
+P-1004;Consulta pediátrica;ESP-PED;Consultas;recorrente
+P-1005;Consulta ginecológica;ESP-GINE;Consultas;recorrente
+P-2001;Hemograma completo;ESP-LAB;Exames laboratoriais;recorrente
+P-2002;Painel bioquímico;ESP-LAB;Exames laboratoriais;recorrente
+P-2003;Ecocardiograma;ESP-CARD;Exames de imagem;variavel
+P-2004;Teste ergométrico;ESP-CARD;Exames de imagem;variavel
+P-2005;Ressonância magnética;ESP-IMG;Exames de imagem;variavel
+P-2006;Tomografia computadorizada;ESP-IMG;Exames de imagem;variavel
+P-2007;Ultrassonografia;ESP-IMG;Exames de imagem;variavel
+P-3001;Sessão de fisioterapia;ESP-FISIO;Terapias;recorrente
+P-3002;Quimioterapia ambulatorial;ESP-ONCO;Quimioterapia e alto custo;recorrente
+P-4001;Atendimento de pronto-socorro;ESP-CLIN;Pronto-socorro;variavel
+P-5001;Internação clínica (diária);ESP-CLIN;Internações clínicas;pontual
+P-6001;Artroscopia de joelho;ESP-ORTO;Cirurgias;pontual
+P-6002;Colecistectomia videolaparoscópica;ESP-CIRG;Cirurgias;pontual
+P-6003;Parto cesáreo;ESP-GINE;Obstetrícia;pontual
+P-7001;Prótese ortopédica (OPME);ESP-ORTO;OPME;pontual

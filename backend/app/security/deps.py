@@ -25,6 +25,8 @@ from datetime import UTC, datetime
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from app.core.logging import set_log_context
+from app.data_platform import readiness
 from app.db.session import get_db
 from app.db.tenant_scope import bind_tenant
 from app.models import AuthSession, Tenant, User, UserTenant
@@ -61,9 +63,14 @@ class TenantContext:
     is_synthetic: bool
     role: Role
     permissions: frozenset[Perm]
+    #: capabilities DISPONÍVEIS = contratadas (plano/override/global) E com dados prontos
     features: frozenset[str] = field(default_factory=frozenset)
     # True quando um SUPER_ADMIN opera o tenant sem vínculo (acesso de plataforma auditado)
     platform_access: bool = False
+    #: contratadas comercialmente (independente de dados) — para explicar indisponibilidade
+    entitled: frozenset[str] = field(default_factory=frozenset)
+    #: motivo de indisponibilidade por falta de dados (feature_key → texto)
+    not_ready: dict = field(default_factory=dict)
 
     def can(self, perm: Perm) -> bool:
         return perm in self.permissions
@@ -143,12 +150,18 @@ def get_tenant_context(
             raise ApiError("forbidden")
         role = Role(m.role)
 
+    bind_tenant(db, tenant.id)
+    set_log_context(tenant_id=tenant.id)
+    # Fase 2 — capability = entitlement comercial E prontidão de dados (backend é a autoridade)
+    contratadas = enabled_features(db, tenant)
+    prontidao = readiness.current(db, tenant.id)
+    disponiveis = frozenset(k for k in contratadas if prontidao.get(k) is None or prontidao[k].ready)
     ctx = TenantContext(
         principal=principal, tenant_id=tenant.id, tenant_name=tenant.name,
         is_synthetic=tenant.is_synthetic, role=role, permissions=tenant_permissions(role),
-        features=enabled_features(db, tenant), platform_access=platform_access,
+        features=disponiveis, platform_access=platform_access, entitled=contratadas,
+        not_ready={k: prontidao[k].reason for k in contratadas - disponiveis},
     )
-    bind_tenant(db, tenant.id)
     request.state.tenant_ctx = ctx
     return ctx
 
@@ -183,13 +196,20 @@ def require_permission(*perms: Perm):
     return dep
 
 
+def feature_error(ctx: TenantContext, key: str) -> ApiError:
+    """Erro coerente para capability indisponível: fora do plano × sem dados prontos."""
+    if key in ctx.entitled:
+        return ApiError("capability_not_ready", ctx.not_ready.get(key) or None, extra={"feature": key})
+    return ApiError("feature_unavailable", extra={"feature": key})
+
+
 def require_feature(*keys: str):
     """Guard: todas as capabilities habilitadas para o tenant (backend é a autoridade)."""
 
     def dep(ctx: TenantContext = Depends(get_tenant_context)) -> TenantContext:
         faltando = [k for k in keys if not ctx.has_feature(k)]
         if faltando:
-            raise ApiError("feature_unavailable", extra={"feature": faltando[0]})
+            raise feature_error(ctx, faltando[0])
         return ctx
 
     return dep

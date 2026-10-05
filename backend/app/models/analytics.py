@@ -17,13 +17,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Index,
     JSON,
     BigInteger,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,

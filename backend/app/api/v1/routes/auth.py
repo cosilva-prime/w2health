@@ -24,11 +24,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.data_platform import readiness
 from app.db.session import get_db
+from app.db.tenant_scope import bind_tenant
 from app.models import AuthSession, Plan, Tenant, User, UserTenant
 from app.saas import audit, branding, settings_catalog
-from app.saas.features import enabled_features
-from app.security import crypto, mfa, sessions
+from app.saas.features import resolve_all
+from app.security import crypto, mfa, recovery, sessions
 from app.security.deps import Principal, get_principal
 from app.security.errors import ApiError
 from app.security.passwords import (
@@ -38,13 +40,14 @@ from app.security.passwords import (
     password_policy_errors,
     verify_password,
 )
-from app.security.rate_limit import SlidingWindowLimiter
+from app.security.rate_limit import build_limiter
 from app.security.rbac import PLATFORM_PERMS, Role, tenant_permissions
 from app.security.tokens import TokenError, create_challenge_token, decode_challenge_token
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
-auth_limiter = SlidingWindowLimiter(get_settings().auth_rate_limit_per_minute)
+# backend compartilhado (banco) por padrão — RATE_LIMIT_BACKEND=memory só em testes/dev isolado
+auth_limiter = build_limiter(get_settings().rate_limit_backend, get_settings().auth_rate_limit_per_minute)
 
 
 # =================================================================== schemas de entrada
@@ -61,6 +64,11 @@ class LoginIn(BaseModel):
 
 class MfaVerifyIn(BaseModel):
     challenge_token: str = Field(max_length=2048)
+    code: str | None = Field(default=None, min_length=6, max_length=10)
+    recovery_code: str | None = Field(default=None, min_length=10, max_length=20)
+
+
+class RecoveryRegenIn(BaseModel):
     code: str = Field(min_length=6, max_length=10)
 
 
@@ -282,6 +290,19 @@ def mfa_verify(payload: MfaVerifyIn, request: Request, response: Response,
         raise ApiError("invalid_credentials")
     if not user.mfa_enabled or not user.mfa_secret_enc:
         raise ApiError("session_expired", "Etapa de login expirada. Entre novamente.")
+    if payload.recovery_code:
+        if not recovery.consume(db, user.id, payload.recovery_code):
+            _registrar_falha(db, user)
+            db.commit()
+            audit.record_independent(db.get_bind(), "auth.mfa_failed", actor=_actor(user),
+                                     entity_type="user", entity_id=user.id,
+                                     details={"via": "recovery_code"})
+            raise ApiError("invalid_credentials", "Código de recuperação inválido.")
+        audit.add(db, "mfa.recovery_code_used", actor=_actor(user), entity_type="user",
+                  entity_id=user.id, details={"restantes": recovery.remaining(db, user.id)})
+        return _finalizar_login(db, request, response, user, tenant_hint=claims.get("tnh"), mfa_ok=True)
+    if not payload.code:
+        raise ApiError("invalid_request", "Informe o código do aplicativo ou um código de recuperação.")
     try:
         passo = mfa.verify(crypto.decrypt(user.mfa_secret_enc), payload.code, user.mfa_last_used_step)
     except crypto.EncryptionUnavailable as e:
@@ -422,7 +443,9 @@ def me(principal: Principal = Depends(get_principal), db: Session = Depends(get_
     vinculos = _tenants_acessiveis(db, user)
     out: dict[str, Any] = {
         "user": {"id": str(user.id), "email": user.email, "name": user.name,
-                 "platform_role": user.platform_role, "mfa_enabled": user.mfa_enabled},
+                 "platform_role": user.platform_role, "mfa_enabled": user.mfa_enabled,
+                 "recovery_codes_remaining": recovery.remaining(db, user.id) if user.mfa_enabled else 0},
+        "capabilities": [],
         "memberships": [{"tenant_id": t.id, "tenant_name": t.name, "role": r,
                          "tenant_status": t.status} for t, r in vinculos],
         "platform_permissions": sorted(p.value for p in PLATFORM_PERMS) if principal.is_super_admin else [],
@@ -446,7 +469,20 @@ def me(principal: Principal = Depends(get_principal), db: Session = Depends(get_
                 if role:
                     out["role"] = role
                     out["permissions"] = sorted(p.value for p in tenant_permissions(role))
-                    out["features"] = sorted(enabled_features(db, t))
+                    # capability = contratada (plano/override) E dados prontos — decidido aqui
+                    bind_tenant(db, t.id)
+                    prontidao = readiness.current(db, t.id)
+                    caps = []
+                    for f in resolve_all(db, t):
+                        r = prontidao.get(f.key)
+                        pronto = r is None or r.ready
+                        caps.append({"key": f.key, "name": f.name, "entitled": f.enabled,
+                                     "data_status": r.status if r else "READY",
+                                     "data_reason": r.reason if r else "",
+                                     "available": f.enabled and pronto})
+                    out["capabilities"] = caps
+                    out["features"] = sorted(c["key"] for c in caps if c["available"])
+                    out["entitled_features"] = sorted(c["key"] for c in caps if c["entitled"])
                     out["settings"] = settings_catalog.public_values(db, t.id)
     return out
 
@@ -525,11 +561,34 @@ def mfa_confirm(payload: MfaConfirmIn, request: Request, response: Response,
     user.mfa_pending_secret_enc = None
     user.mfa_enabled = True
     user.mfa_last_used_step = passo
-    audit.add(db, "mfa.enabled", actor=_actor(user), entity_type="user", entity_id=user.id)
+    codigos = recovery.generate(db, user.id)  # exibidos UMA vez; só o hash é guardado
+    audit.add(db, "mfa.enabled", actor=_actor(user), entity_type="user", entity_id=user.id,
+              details={"recovery_codes_gerados": len(codigos)})
     if claims is not None:  # fluxo de login com MFA obrigatório: conclui o login
-        return _finalizar_login(db, request, response, user, tenant_hint=claims.get("tnh"), mfa_ok=True)
+        out = _finalizar_login(db, request, response, user, tenant_hint=claims.get("tnh"), mfa_ok=True)
+        return {**out, "recovery_codes": codigos}
     db.commit()
-    return {"status": "ok", "mfa_enabled": True}
+    return {"status": "ok", "mfa_enabled": True, "recovery_codes": codigos}
+
+
+@router.post("/mfa/recovery-codes", summary="Gera NOVOS códigos de recuperação (invalida os anteriores)")
+def regenerate_recovery_codes(payload: RecoveryRegenIn, principal: Principal = Depends(get_principal),
+                              db: Session = Depends(get_db)) -> dict:
+    _limitar()
+    user = db.get(User, principal.user_id)
+    if not user.mfa_enabled or not user.mfa_secret_enc:
+        raise ApiError("conflict", "MFA não está habilitado.")
+    passo = mfa.verify(crypto.decrypt(user.mfa_secret_enc), payload.code, user.mfa_last_used_step)
+    if passo is None:
+        _registrar_falha(db, user)
+        db.commit()
+        raise ApiError("invalid_request", "Código inválido.")
+    user.mfa_last_used_step = passo
+    codigos = recovery.generate(db, user.id)
+    audit.add(db, "mfa.recovery_codes_generated", actor=principal.actor(), tenant_id=principal.tenant_id,
+              entity_type="user", entity_id=user.id, details={"quantidade": len(codigos)})
+    db.commit()
+    return {"recovery_codes": codigos}
 
 
 @router.post("/mfa/disable", summary="Desabilita o MFA (exige senha + código; bloqueado se obrigatório)")
@@ -552,6 +611,7 @@ def mfa_disable(payload: MfaDisableIn, principal: Principal = Depends(get_princi
     user.mfa_enabled = False
     user.mfa_secret_enc = None
     user.mfa_last_used_step = None
+    recovery.clear(db, user.id)
     audit.add(db, "mfa.disabled", actor=principal.actor(), tenant_id=principal.tenant_id,
               entity_type="user", entity_id=user.id)
     db.commit()

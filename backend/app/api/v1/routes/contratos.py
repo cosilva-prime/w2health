@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.analytics import contratos as ctr
 from app.api.v1.routes._common import analytics_guard, comparacao_dep, competencia_dep
-from app.saas.feature_filters import filter_alertas, sanitize
+from app.saas import audit
+from app.saas.feature_filters import BENEFICIARY, filter_alertas, sanitize
 from app.security.deps import TenantContext, get_tenant_context, get_tenant_db
 
 router = APIRouter(
@@ -42,6 +43,10 @@ def detalhe(
         # contrato de outro tenant é indistinguível de inexistente
         raise HTTPException(404, str(e)) from e
     res = sanitize(res, ctx.features)
+    if ctx.has_feature(BENEFICIARY):  # o detalhe traz os maiores beneficiários do contrato
+        audit.data_access(db.get_bind(), actor=ctx.actor, tenant_id=ctx.tenant_id,
+                          action="data.beneficiary.contract_top", entity_type="contrato",
+                          entity_id=id_contrato, details={"competencia": competencia.isoformat()})
     if ctx.has_feature("alerts"):
         res["alertas"] = filter_alertas(res.get("alertas") or [], ctx.features)
     else:

@@ -1,0 +1,11 @@
+cod_contrato;descricao_contrato;cod_plano;tipo_contrato
+CT-001;Contrato 001;PL-ESSENCIAL;PF
+CT-002;Contrato 002;PL-PADRAO;PME
+CT-003;Contrato 003;PL-SUPERIOR;PME
+CT-004;Contrato 004;PL-EMPRESA;Empresarial
+CT-005;Contrato 005;PL-ESSENCIAL;PF
+CT-006;Contrato 006;PL-PADRAO;PME
+CT-007;Contrato 007;PL-SUPERIOR;PME
+CT-008;Contrato 008;PL-EMPRESA;Empresarial
+CT-009;Contrato 009;PL-ESSENCIAL;PF
+CT-010;Contrato 010;PL-PADRAO;PME

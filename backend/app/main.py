@@ -25,7 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_v1_router
 from app.core.config import get_settings
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, set_log_context
 from app.core.tenant import TenantContextMissing
 from app.saas.audit import RequestMeta, set_request_meta
 from app.security.errors import ApiError
@@ -96,6 +96,7 @@ def create_app() -> FastAPI:
         rid = request.headers.get("x-request-id") or ""
         rid = rid if _REQ_ID.match(rid) else uuid.uuid4().hex
         request.state.request_id = rid
+        set_log_context(request_id=rid, correlation_id=rid)
         set_request_meta(RequestMeta(ip=_client_ip(request),
                                      user_agent=request.headers.get("user-agent"),
                                      request_id=rid))

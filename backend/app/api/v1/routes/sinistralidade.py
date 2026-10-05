@@ -25,7 +25,8 @@ from app.api.v1.routes._common import (
     contrato_id_dep,
     exigir_feature_da_dimensao,
 )
-from app.saas.feature_filters import sanitize
+from app.saas import audit
+from app.saas.feature_filters import BENEFICIARY, sanitize
 from app.security.deps import TenantContext, get_tenant_context, get_tenant_db, require_feature
 
 router = APIRouter(
@@ -88,11 +89,13 @@ def concentracao_variacao(
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
     contrato_id: int | None = Depends(contrato_id_dep),
+    ctx: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_tenant_db),
 ) -> dict:
     res = decomposition.concentracao_variacao_beneficiarios(db, competencia, comparacao, contrato_id)
     if res is None:
         raise HTTPException(404, "sem dados de beneficiário para o período")
+    _auditar_drill(db, ctx, "data.beneficiary.concentration", {"competencia": competencia.isoformat()})
     return res
 
 
@@ -137,6 +140,8 @@ def explain_drill(
         raise HTTPException(404, f"fator sem dados para {dimensao}={chave}") from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    _auditar_drill(db, ctx, "data.beneficiary.drilldown",
+                   {"dimensao": dimensao, "chave": chave, "competencia": competencia.isoformat()})
     return sanitize(res, ctx.features)
 
 
@@ -157,7 +162,17 @@ def explain_causas(
     if dimensao not in decomposition.DIMENSOES_VALIDAS:
         raise HTTPException(422, f"dimensão inválida: {dimensao}")
     exigir_feature_da_dimensao(ctx, dimensao)
-    return sanitize(
+    res = sanitize(
         cohorts.analisar_causas(db, dimensao, chave, competencia, comparacao, contrato_id),
         ctx.features,
     )
+    _auditar_drill(db, ctx, "data.beneficiary.cohorts",
+                   {"dimensao": dimensao, "chave": chave, "competencia": competencia.isoformat()})
+    return res
+
+
+def _auditar_drill(db: Session, ctx: TenantContext, action: str, details: dict) -> None:
+    """Só audita quando a resposta inclui amostras individuais (feature de beneficiário ativa)."""
+    if ctx.has_feature(BENEFICIARY):
+        audit.data_access(db.get_bind(), actor=ctx.actor, tenant_id=ctx.tenant_id, action=action,
+                          entity_type="beneficiario", details=details)

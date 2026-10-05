@@ -4,8 +4,8 @@ Regras:
 * As definições reproduzem as fórmulas efetivamente implementadas (`formulas.py`,
   `sinistralidade.py`, `seed/aggregate.py`) e documentadas em `docs/ANALYTICS_ENGINE.md` —
   não há fórmula "de vitrine".
-* A procedência vem do banco: data da última carga (`seed_manifest` para massa sintética;
-  `ingestion_runs` quando houver pipeline real). Sem registro → `None` e a interface mostra
+* A procedência vem do banco: última ingestão PUBLICADA (`ingestion_runs.stage=AVAILABLE`,
+  de qualquer fonte — gerador sintético ou arquivo externo) e as fontes ativas do tenant. Sem registro → `None` e a interface mostra
   "Não disponível" — nada é fabricado.
 * Massa sintética é sempre declarada (`dados_sinteticos=True`).
 """
@@ -108,13 +108,21 @@ def procedencia(session: Session, *, is_synthetic: bool) -> dict:
         {"t": t},
     ).mappings().first()
     ingestao = session.execute(
-        text("SELECT finished_at FROM ingestion_runs WHERE tenant_id = :t AND status = 'success' "
-             "ORDER BY finished_at DESC NULLS LAST LIMIT 1"),
+        text("SELECT r.finished_at, c.name, c.source_type, c.source_system FROM ingestion_runs r "
+             "LEFT JOIN source_connections c ON c.id = r.source_connection_id "
+             "WHERE r.tenant_id = :t AND r.stage = 'AVAILABLE' "
+             "ORDER BY r.finished_at DESC NULLS LAST LIMIT 1"),
         {"t": t},
-    ).scalar_one_or_none()
+    ).mappings().first()
+    fontes = session.execute(
+        text("SELECT name, source_type, last_success_at FROM source_connections "
+             "WHERE tenant_id = :t AND status = 'ACTIVE' ORDER BY id"),
+        {"t": t},
+    ).mappings().all()
 
-    if ingestao is not None:
-        ultima, tipo = ingestao, "ingestao"
+    if ingestao is not None and ingestao["finished_at"] is not None:
+        ultima = ingestao["finished_at"]
+        tipo = "massa_sintetica" if ingestao["source_type"] == "SYNTHETIC" else "ingestao"
     elif carga is not None:
         ultima, tipo = carga["criado_em"], "massa_sintetica"
     else:
@@ -128,5 +136,11 @@ def procedencia(session: Session, *, is_synthetic: bool) -> dict:
                    if carga else None),
         "camada": "Serving (PostgreSQL) — tabelas agregadas agg_* reconstruídas a partir da "
                   "fato eventos_assistenciais",
+        # origem lógica real dos dados (o motor analítico não usa isto — só exibição)
+        "fonte_ultima_carga": ({"nome": ingestao["name"], "tipo": ingestao["source_type"]}
+                               if ingestao is not None and ingestao["name"] else None),
+        "fontes": [{"nome": f["name"], "tipo": f["source_type"],
+                    "ultima_carga": f["last_success_at"].isoformat() if f["last_success_at"] else None}
+                   for f in fontes],
         "kpis": KPIS,
     }

@@ -3,6 +3,9 @@
 v1.2: `lista` aceita `?id_contrato=`; `detalhe` traz o bloco `comportamento` (recorrência,
 participação na variação, eventos pontuais de alto custo); novo endpoint
 `/novos-casos-alto-custo`.
+
+Fase 2: toda leitura de dado INDIVIDUAL (lista com códigos, detalhe, eventos, timeline,
+novos casos) é auditada — `data.beneficiary.*` com id técnico, sem conteúdo clínico.
 """
 
 from __future__ import annotations
@@ -21,7 +24,8 @@ from app.api.v1.routes._common import (
     contrato_id_dep,
 )
 from app.repositories import analytics_repo as repo
-from app.security.deps import get_tenant_db
+from app.saas import audit
+from app.security.deps import TenantContext, get_tenant_context, get_tenant_db
 
 router = APIRouter(
     prefix="/analytics/beneficiarios", tags=["Beneficiários"],
@@ -48,11 +52,15 @@ def lista(
     sexo: str | None = Query(None),
     id_plano: int | None = Query(None),
     id_contrato: int | None = Depends(contrato_id_dep),
+    ctx: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_tenant_db),
 ) -> dict:
-    return beneficiaries.lista(
+    res = beneficiaries.lista(
         db, competencia, page, page_size, faixa_etaria, sexo, id_plano, id_contrato
     )
+    _auditar(db, ctx, "data.beneficiary.list", None,
+             {"competencia": competencia.isoformat(), "pagina": page, "itens": len(res.get("itens", []))})
+    return res
 
 
 @router.get(
@@ -63,27 +71,43 @@ def novos_casos_alto_custo(
     competencia: date = Depends(competencia_dep),
     comparacao: str = Depends(comparacao_dep),
     id_contrato: int | None = Depends(contrato_id_dep),
+    ctx: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_tenant_db),
 ) -> dict:
-    return beneficiaries.novos_casos_alto_custo(db, competencia, comparacao, contrato_id=id_contrato)
+    res = beneficiaries.novos_casos_alto_custo(db, competencia, comparacao, contrato_id=id_contrato)
+    _auditar(db, ctx, "data.beneficiary.high_cost_list", None, {"competencia": competencia.isoformat()})
+    return res
 
 
 @router.get("/{id_ou_codigo}", summary="Detalhe anonimizado + evolução mensal + eventos + comportamento")
 def detalhe(
     id_ou_codigo: str,
     competencia: str | None = Query(None, description="AAAA-MM — referência do bloco de comportamento."),
+    ctx: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_tenant_db),
 ) -> dict:
     comp = parse_competencia(competencia) if competencia else None
+    bid = _resolve_id(db, id_ou_codigo)
     try:
-        return beneficiaries.detalhe(db, _resolve_id(db, id_ou_codigo), comp)
+        res = beneficiaries.detalhe(db, bid, comp)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    _auditar(db, ctx, "data.beneficiary.view", bid, {"eventos_exibidos": len(res.get("eventos", []))})
+    return res
 
 
 @router.get("/{id_ou_codigo}/timeline", summary="Timeline assistencial simplificada")
-def timeline(id_ou_codigo: str, db: Session = Depends(get_tenant_db)) -> dict:
+def timeline(id_ou_codigo: str, ctx: TenantContext = Depends(get_tenant_context),
+             db: Session = Depends(get_tenant_db)) -> dict:
+    bid = _resolve_id(db, id_ou_codigo)
     try:
-        return beneficiaries.timeline(db, _resolve_id(db, id_ou_codigo))
+        res = beneficiaries.timeline(db, bid)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    _auditar(db, ctx, "data.beneficiary.timeline", bid, {})
+    return res
+
+
+def _auditar(db: Session, ctx: TenantContext, action: str, bid: int | None, details: dict) -> None:
+    audit.data_access(db.get_bind(), actor=ctx.actor, tenant_id=ctx.tenant_id, action=action,
+                      entity_type="beneficiario", entity_id=bid, details=details)

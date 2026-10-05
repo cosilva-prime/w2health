@@ -80,6 +80,29 @@ class Settings(BaseSettings):
     # Só confiar em X-Forwarded-For atrás de proxy conhecido.
     trust_proxy_headers: bool = Field(default=False)
 
+    # Backend do limitador de tentativas: "database" (compartilhado entre processos/réplicas,
+    # tabela auth_rate_limits) ou "memory" (só por processo — testes/dev isolado).
+    rate_limit_backend: str = Field(default="database")
+
+    # ------------------------------------------------------------- data platform (Fase 2)
+    # Papel de PIPELINE (w2health_pipeline): escreve no data plane do tenant amarrado ao
+    # PipelineContext, sujeito a RLS. Sem esta URL, pipelines não executam (nunca há
+    # fallback para o papel dono/superusuário).
+    database_pipeline_url: str | None = Field(default=None)
+    pipeline_db_role: str = Field(default="w2health_pipeline")
+    pipeline_db_password: SecretStr | None = Field(default=None)
+    # Armazenamento RAW (abstração RawStorage). "local" = filesystem (DEV); adapters de
+    # object storage (S3/ADLS/MinIO) entram sem mudar o pipeline.
+    raw_storage_backend: str = Field(default="local")
+    raw_storage_root: str = Field(default="./var/raw")
+    # Diretório da Data Platform (contratos, mappings, regras de qualidade, exemplos).
+    data_platform_dir: str | None = Field(default=None)
+    # Limites do upload controlado (fonte FILE).
+    upload_max_file_mb: int = Field(default=50, ge=1, le=1024)
+    upload_max_files: int = Field(default=20, ge=1, le=100)
+    # Formato de log: "json" (estruturado, padrão) ou "text".
+    log_format: str = Field(default="json")
+
     # ------------------------------------------------------------------ criptografia
     # Chave(s) Fernet para segredos em repouso (MFA, credenciais de integração).
     # Várias chaves separadas por vírgula = rotação (a 1ª cifra, todas decifram).

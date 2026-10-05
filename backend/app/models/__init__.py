@@ -29,16 +29,20 @@ from app.models.config import RegraAlerta
 from app.models.events import EventoAssistencial
 from app.models.membership import Beneficiario, Competencia, Receita
 from app.models.platform import (
+    CapabilityReadiness,
     DataQualityResult,
     IngestionRun,
     PipelineRun,
+    RawObject,
     ReceitaContrato,
+    ReconciliationResult,
     SourceConnection,
     SourceEntity,
     Tenant,
 )
 from app.models.saas import (
     AuditLog,
+    AuthRateLimit,
     AuthSession,
     Feature,
     Plan,
@@ -47,9 +51,11 @@ from app.models.saas import (
     TenantBranding,
     TenantBrandingAsset,
     TenantFeature,
+    TenantOnboarding,
     TenantSecret,
     TenantSetting,
     User,
+    UserRecoveryCode,
     UserTenant,
 )
 
@@ -95,4 +101,11 @@ __all__ = [
     "TenantSetting",
     "TenantSecret",
     "AuditLog",
+    # Fase 2
+    "RawObject",
+    "ReconciliationResult",
+    "CapabilityReadiness",
+    "TenantOnboarding",
+    "UserRecoveryCode",
+    "AuthRateLimit",
 ]

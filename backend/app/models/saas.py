@@ -321,3 +321,50 @@ class AuditLog(ControlBase):
     user_agent: Mapped[str | None] = mapped_column(String(200), nullable=True)
     request_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     details: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+# ============================================================================ Fase 2
+ONBOARDING_STATES = (
+    "TENANT_CREATED", "SOURCE_REGISTERED", "CONNECTION_VALIDATED", "RAW_LOADED",
+    "MAPPING_VALIDATED", "DATA_QUALITY_VALIDATED", "SILVER_READY", "GOLD_READY",
+    "RECONCILED", "CAPABILITIES_READY", "HOMOLOGATED", "ACTIVE",
+)
+
+
+class TenantOnboarding(ControlBase):
+    """Estado do onboarding técnico do tenant (máquina de estados persistida, sem engine)."""
+
+    __tablename__ = "tenant_onboarding"
+    __table_args__ = (CheckConstraint(_in("state", ONBOARDING_STATES), name="state_valido"),)
+
+    tenant_id: Mapped[str] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(String(30), default="TENANT_CREATED")
+    history: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = _ts_updated()
+
+
+class UserRecoveryCode(ControlBase):
+    """Código de recuperação de MFA — só o hash argon2id é guardado; uso único."""
+
+    __tablename__ = "user_recovery_codes"
+
+    id: Mapped[uuid_mod.UUID] = mapped_column(Uuid, primary_key=True, default=uuid_mod.uuid4)
+    user_id: Mapped[uuid_mod.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = _ts_created()
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AuthRateLimit(ControlBase):
+    """Contador de tentativas por janela fixa — backend COMPARTILHADO do rate limit
+    (vale entre processos/réplicas). A chave é um hash (nunca o IP em claro)."""
+
+    __tablename__ = "auth_rate_limits"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)

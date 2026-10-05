@@ -3,11 +3,11 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Index, Integer, Numeric, String
+from sqlalchemy import BigInteger, Date, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models._mixins import TenantMixin
+from app.models._mixins import LineageMixin, TenantMixin
 
 # Tipos de atendimento admitidos (validação em código; armazenado como texto).
 TIPOS_ATENDIMENTO = (
@@ -21,7 +21,7 @@ TIPOS_ATENDIMENTO = (
 )
 
 
-class EventoAssistencial(TenantMixin, Base):
+class EventoAssistencial(TenantMixin, LineageMixin, Base):
     __tablename__ = "eventos_assistenciais"
     __table_args__ = (
         Index("ix_evento_comp_espec", "competencia", "id_especialidade"),
@@ -31,6 +31,10 @@ class EventoAssistencial(TenantMixin, Base):
         # Fundação SaaS V1 — consultas sempre filtram tenant primeiro
         Index("ix_eventos_tenant_competencia", "tenant_id", "competencia"),
         Index("ix_eventos_tenant_beneficiario", "tenant_id", "id_beneficiario"),
+        # Fase 2 — idempotência por registro de origem (fontes externas)
+        Index("uq_eventos_tenant_fonte_registro", "tenant_id", "source_connection_id",
+              "source_record_id", unique=True,
+              postgresql_where=text("source_record_id IS NOT NULL")),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

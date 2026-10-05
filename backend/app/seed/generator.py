@@ -128,10 +128,10 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
     contrato_por_plano: dict[int, list[int]] = {pid: [] for pid in plano_ids}
     contrato_pesos_por_plano: dict[int, list[float]] = {pid: [] for pid in plano_ids}
     contratos = []
-    for cod, nome, tipo, vidas_alvo in CONTRATOS:
+    for n_ctr, (cod, nome, tipo, vidas_alvo) in enumerate(CONTRATOS, start=1):
         c = Contrato(
-            tenant_id=tid, id_plano=plano_id_by_cod[cod], nome=nome, tipo=tipo,
-            vidas_alvo=int(vidas_alvo),
+            tenant_id=tid, codigo=f"CTR-{n_ctr:04d}", id_plano=plano_id_by_cod[cod], nome=nome,
+            tipo=tipo, vidas_alvo=int(vidas_alvo),
         )
         contratos.append(c)
     session.add_all(contratos)
@@ -197,6 +197,8 @@ def load_catalogos(session: Session, cfg: SeedConfig, rng: np.random.Generator) 
 
     # Prestadores
     prest_rows = _build_prestadores(rng, espec_id, regiao_ids, tenant_id=tid)
+    for n_prest, p in enumerate(prest_rows, start=1):  # chave de negócio (Fase 2)
+        p.codigo = f"PRE-{n_prest:04d}"
     session.add_all(prest_rows)
     session.flush()
     prest_by_espec: dict[str, dict] = {}
@@ -698,6 +700,10 @@ def _bulk_insert(
         return
     if tenant_id is not None:
         rows = [{"tenant_id": tenant_id, **r} for r in rows]
+    # Fase 2: linhagem do caminho sintético (mesmos metadados de qualquer fonte externa)
+    linhagem = session.info.get("w2h_lineage")
+    if linhagem:
+        rows = [{**r, **linhagem} for r in rows]
     table = model.__tablename__
     cols = list(rows[0].keys())
     col_list = ", ".join(cols)

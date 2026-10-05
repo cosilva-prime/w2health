@@ -12,7 +12,7 @@ from sqlalchemy import Boolean, Date, ForeignKey, Integer, Numeric, String, Uniq
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models._mixins import TenantMixin
+from app.models._mixins import LineageMixin, TenantMixin
 from app.models.catalog import Contrato, Plano, Regiao
 
 
@@ -27,7 +27,7 @@ class Competencia(Base):
     is_inverno: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
-class Beneficiario(TenantMixin, Base):
+class Beneficiario(TenantMixin, LineageMixin, Base):
     __tablename__ = "beneficiarios"
     __table_args__ = (
         UniqueConstraint("tenant_id", "codigo", name="uq_beneficiarios_tenant_codigo"),
@@ -50,7 +50,7 @@ class Beneficiario(TenantMixin, Base):
     contrato: Mapped[Contrato] = relationship()
 
 
-class Receita(TenantMixin, Base):
+class Receita(TenantMixin, LineageMixin, Base):
     __tablename__ = "receitas"
     __table_args__ = (
         UniqueConstraint(

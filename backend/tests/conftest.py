@@ -18,6 +18,12 @@ import secrets
 # Chaves EFÊMERAS para a sessão de testes quando o ambiente não define (CI/container).
 # Precisam existir antes de `app.*` ser importado (configuração é cacheada).
 os.environ.setdefault("JWT_SECRET_KEY", secrets.token_urlsafe(48))
+# Os testes verificam os PADRÕES de segurança — não dependem de overrides do .env local.
+os.environ["SUPER_ADMIN_REQUIRE_MFA"] = "true"
+os.environ["RATE_LIMIT_BACKEND"] = "memory"
+os.environ["LOG_FORMAT"] = "text"
+os.environ["RAW_STORAGE_ROOT"] = os.path.join(
+    os.environ.get("TMPDIR") or os.environ.get("TEMP") or "/tmp", f"w2h-raw-test-{secrets.token_hex(4)}")
 if not os.environ.get("DATA_ENCRYPTION_KEY"):
     from cryptography.fernet import Fernet
 
@@ -190,6 +196,7 @@ ISO_USERS_B = {
 }
 SUPERADMIN_EMAIL = "superadmin@iso.example"
 ISO_APP_ROLE = "w2health_app_test"
+ISO_PIPELINE_ROLE = "w2health_pipeline_test"
 
 
 @pytest.fixture(scope="session")
@@ -208,8 +215,10 @@ def iso_env():
     engine, url = recreate_database("w2health_test_iso")
     create_all(engine)
     senha_role = secrets.token_urlsafe(16)
+    senha_pipe = secrets.token_urlsafe(16)
     with engine.begin() as c:
         rls.apply_all(c, ISO_APP_ROLE, senha_role)
+        rls.apply_pipeline_role(c, ISO_PIPELINE_ROLE, senha_pipe)
     Owner = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     for code, nome, seed in ((TENANT_A, "Operadora A (sintética)", 42),
                              (TENANT_B, "Operadora B (sintética)", 7)):
@@ -224,7 +233,15 @@ def iso_env():
     app_url = make_url(url).set(username=ISO_APP_ROLE, password=senha_role)
     app_engine = create_engine(app_url, future=True)
     AppMaker = sessionmaker(bind=app_engine, autoflush=False, expire_on_commit=False)
-    yield SimpleNamespace(owner=Owner, app=AppMaker, app_engine=app_engine)
+    # Fase 2: pipelines executam com o papel de PIPELINE (sem superusuário, sob RLS)
+    from app.db.pipeline import set_pipeline_engine
+
+    pipe_engine = create_engine(make_url(url).set(username=ISO_PIPELINE_ROLE, password=senha_pipe),
+                                future=True)
+    set_pipeline_engine(pipe_engine)
+    yield SimpleNamespace(owner=Owner, app=AppMaker, app_engine=app_engine, pipeline_engine=pipe_engine)
+    set_pipeline_engine(None)
+    pipe_engine.dispose()
     app_engine.dispose()
     engine.dispose()
 

@@ -1,0 +1,5 @@
+cod_plano;nome_plano;segmentacao;coparticipacao;perc_coparticipacao
+PL-ESSENCIAL;Essencial Ambulatorial;ambulatorial;S;0,2000
+PL-PADRAO;Padrão Enfermaria;completo;S;0,1000
+PL-SUPERIOR;Superior Apartamento;completo;N;0,0000
+PL-EMPRESA;Empresarial Coletivo;completo;N;0,0000

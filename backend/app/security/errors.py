@@ -10,6 +10,7 @@ estrutura interna, existência de conta, ids de outro tenant ou stack trace.
 | invalid_credentials     | 401  | erro no formulário de login         |
 | forbidden               | 403  | "Acesso não permitido"              |
 | feature_unavailable     | 403  | "Recurso não disponível no plano"   |
+| capability_not_ready    | 403  | "Contratado, mas dados ainda não disponíveis" |
 | tenant_suspended        | 403  | "Ambiente suspenso"                 |
 | tenant_required         | 403  | seletor de ambiente (SUPER_ADMIN)   |
 | no_tenant_access        | 403  | "Sem acesso a nenhum ambiente"      |
@@ -30,6 +31,7 @@ _DEFAULT_MSG = {
     "invalid_credentials": "Credenciais inválidas ou acesso temporariamente bloqueado.",
     "forbidden": "Você não tem permissão para esta ação.",
     "feature_unavailable": "Este recurso não está disponível no plano contratado.",
+    "capability_not_ready": "Recurso contratado, mas os dados necessários ainda não estão disponíveis.",
     "tenant_suspended": "Este ambiente está suspenso. Procure o administrador.",
     "tenant_required": "Selecione um ambiente (tenant) para continuar.",
     "no_tenant_access": "Sua conta não tem acesso a nenhum ambiente ativo.",
@@ -43,7 +45,7 @@ _DEFAULT_MSG = {
 
 _STATUS = {
     "not_authenticated": 401, "session_expired": 401, "invalid_credentials": 401,
-    "forbidden": 403, "feature_unavailable": 403, "tenant_suspended": 403,
+    "forbidden": 403, "feature_unavailable": 403, "capability_not_ready": 403, "tenant_suspended": 403,
     "tenant_required": 403, "no_tenant_access": 403, "mfa_setup_required": 403,
     "rate_limited": 429, "not_found": 404, "conflict": 409, "invalid_request": 422,
     "service_unavailable": 503,

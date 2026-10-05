@@ -194,6 +194,9 @@ def reset_mfa(session: Session, user: User) -> None:
     user.mfa_pending_secret_enc = None
     user.mfa_last_used_step = None
     user.token_version += 1
+    from app.security import recovery
+
+    recovery.clear(session, user.id)  # códigos de recuperação antigos deixam de valer
     sessions.revoke_all_for_user(session, user.id, "mfa_reset")
     session.flush()
 

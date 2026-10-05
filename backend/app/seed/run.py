@@ -56,6 +56,12 @@ def run_seed(
     log(f"limpando dados do tenant {cfg.tenant_id}...")
     wipe_dados(session, cfg.tenant_id)
 
+    # Fase 2: o gerador é registrado como uma FONTE (SYNTHETIC) — mesma linhagem de
+    # qualquer origem externa (source_connections / ingestion_runs / pipeline_runs)
+    from app.data_platform import synthetic
+
+    lineage = synthetic.start(session, cfg.tenant_id)
+
     log("catálogos...")
     cat = load_catalogos(session, cfg, rng)
 
@@ -107,6 +113,10 @@ def run_seed(
     log("reconstruindo camada analítica...")
     counts = rebuild_aggregations(session, tenant_id=cfg.tenant_id)
     log(f"  {counts}")
+
+    synthetic.finish(session, cfg.tenant_id, lineage, counts=counts,
+                     eventos=stats["total_eventos"], competencia_inicio=cfg.inicio,
+                     competencia_fim=cfg.fim)
 
     _seed_regras_alerta_default(session, cfg.tenant_id)
 

@@ -26,3 +26,7 @@ Thumbs.db
 
 # Docker
 *.pid
+
+# RAW storage local (DEV) — nunca versionar dados recebidos
+var/
+backend/var/

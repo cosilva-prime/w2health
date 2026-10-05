@@ -31,12 +31,17 @@ def _tuple_from_migration(nome_arquivo: str, constante: str) -> set[str]:
 
 def test_lista_de_tabelas_da_migration_bate_com_metadata():
     """Toda tabela do data plane com tenant_id recebe política — se alguém criar uma tabela
-    nova com tenant_id sem migration de RLS, este teste falha."""
+    nova com tenant_id sem migration de RLS, este teste falha. (Fase 2: a política das
+    tabelas novas vem da migration f4c5d6e7a8b9.)"""
     esperado = set(rls.data_plane_tables())
-    assert _tuple_from_migration("e8b9c0d1f2a3_v1_saas_rls_e_papel_de_runtime.py", "DATA_PLANE_TABLES") == esperado
-    assert _tuple_from_migration("c7a1e2b3d4f5_v1_saas_control_plane.py", "DATA_PLANE_TABLES") == esperado
-    assert _tuple_from_migration("e8b9c0d1f2a3_v1_saas_rls_e_papel_de_runtime.py",
-                                 "CONTROL_PLANE_TABLES") == set(rls.control_plane_tables())
+    fase1 = _tuple_from_migration("e8b9c0d1f2a3_v1_saas_rls_e_papel_de_runtime.py", "DATA_PLANE_TABLES")
+    fase2 = _tuple_from_migration("f4c5d6e7a8b9_fase2_data_platform_operacional.py", "NEW_DATA_PLANE_TABLES")
+    assert fase1 | fase2 == esperado
+    assert _tuple_from_migration("c7a1e2b3d4f5_v1_saas_control_plane.py", "DATA_PLANE_TABLES") == fase1
+    controle_fase1 = _tuple_from_migration("e8b9c0d1f2a3_v1_saas_rls_e_papel_de_runtime.py",
+                                           "CONTROL_PLANE_TABLES")
+    novas_controle = {"tenant_onboarding", "user_recovery_codes", "auth_rate_limits"}
+    assert controle_fase1 | novas_controle == set(rls.control_plane_tables())
 
 
 def test_todas_as_tabelas_do_data_plane_tem_rls_forcado(iso_env):

@@ -131,3 +131,13 @@ def record_independent(
             s.commit()
     except Exception:  # noqa: BLE001 — auditoria de falha nunca derruba a resposta
         log.exception("falha ao gravar auditoria independente (action=%s)", action)
+
+
+def data_access(bind, *, actor: Actor, tenant_id: str, action: str, entity_type: str,
+                entity_id=None, details: dict | None = None) -> None:
+    """Auditoria de LEITURA de dado individual sensível (beneficiário, eventos, drill-down).
+
+    Registra quem, quando, qual tenant, qual entidade e o id TÉCNICO — nunca conteúdo
+    clínico (procedimentos, diagnósticos, valores) nem o payload devolvido."""
+    record_independent(bind, action, actor=actor, tenant_id=tenant_id, entity_type=entity_type,
+                       entity_id=entity_id, outcome="success", details=details or {})

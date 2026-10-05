@@ -1,0 +1,130 @@
+# MAPPING EXECUTÁVEL — layout "operadora genérica" (pacote sintético de exemplo)
+#   SOURCE: data_platform/examples/generic_operator/*.csv  (nomes de coluna FICTÍCIOS,
+#           não correspondem a MV, Tasy, Benner ou qualquer produto real)
+#   TARGET: contrato operacional canônico v1 (backend/app/data_platform/canonical.py,
+#           espelho de data_platform/contracts/*.yaml)
+#
+# Formato e transformações permitidas: docs/MAPPING_FRAMEWORK.md. Nada de código no YAML.
+# Versão: qualquer mudança incompatível cria generic_operator_v2.yaml (a fonte aponta a versão).
+
+mapping_id: generic_operator
+version: 1
+description: "Pacote CSV de exemplo da operadora genérica (sintético)."
+
+source_format:
+  type: csv
+  delimiter: ";"
+  encoding: utf-8
+  decimal_separator: ","
+  date_formats: ["%d/%m/%Y"]
+
+quality:
+  # fração máxima de linhas rejeitadas por entidade antes de BLOQUEAR a carga.
+  # 0 = qualquer linha com ERROR bloqueia (padrão conservador, sem tolerância silenciosa).
+  max_rejected_ratio: 0.0
+
+reconciliation:
+  financial_tolerance_abs: 0.00   # R$ — diferença máxima aceita como WARNING
+  count_tolerance_abs: 0          # registros
+
+entities:
+  - source_entity: especialidades
+    target_entity: especialidade
+    required: true
+    fields:
+      codigo: {source: cod_especialidade, normalize: [strip, upper]}
+      nome: {source: nome_especialidade, normalize: [collapse_spaces]}
+      grupo: {source: grupo, normalize: [strip, lower]}
+
+  - source_entity: planos
+    target_entity: plano
+    required: true
+    fields:
+      codigo: {source: cod_plano, normalize: [strip, upper]}
+      nome: {source: nome_plano, normalize: [collapse_spaces]}
+      segmentacao: {source: segmentacao, normalize: [strip, lower]}
+      tem_coparticipacao: {source: coparticipacao, type: bool}
+      percentual_coparticipacao: {source: perc_coparticipacao, type: decimal, default: 0}
+
+  - source_entity: contratos
+    target_entity: contrato
+    required: true
+    fields:
+      codigo: {source: cod_contrato, normalize: [strip, upper]}
+      plano_codigo: {source: cod_plano, normalize: [strip, upper]}
+      nome: {source: descricao_contrato, normalize: [collapse_spaces]}
+      tipo: {source: tipo_contrato, normalize: [strip]}
+
+  - source_entity: prestadores
+    target_entity: prestador
+    required: true
+    fields:
+      codigo: {source: cod_prestador, normalize: [strip, upper]}
+      nome: {source: razao_social, normalize: [collapse_spaces]}
+      tipo_prestador: {source: tipo, normalize: [strip, lower]}
+      cidade: {source: municipio, normalize: [collapse_spaces]}
+      uf: {source: uf, normalize: [strip, upper]}
+      especialidade_codigo: {source: cod_especialidade_principal, normalize: [strip, upper]}
+
+  - source_entity: procedimentos
+    target_entity: procedimento
+    required: true
+    fields:
+      codigo: {source: cod_procedimento, normalize: [strip, upper]}
+      descricao: {source: descricao, normalize: [collapse_spaces]}
+      especialidade_codigo: {source: cod_especialidade, normalize: [strip, upper]}
+      grupo_procedimento: {source: grupo, normalize: [collapse_spaces]}
+      perfil_utilizacao: {source: perfil, normalize: [strip, lower]}
+
+  - source_entity: beneficiarios
+    target_entity: beneficiario
+    required: true
+    fields:
+      # a matrícula já chega pseudonimizada do cliente (nunca CPF/CNS)
+      codigo: {source: matricula, normalize: [strip, upper]}
+      sexo:
+        source: sexo
+        normalize: [strip, lower]
+        map: {feminino: F, masculino: M, f: F, m: M}
+      data_nascimento: {source: dt_nascimento, type: date}
+      plano_codigo: {source: cod_plano, normalize: [strip, upper]}
+      contrato_codigo: {source: cod_contrato, normalize: [strip, upper]}
+      cidade: {source: municipio, normalize: [collapse_spaces]}
+      uf: {source: uf, normalize: [strip, upper]}
+      data_adesao: {source: dt_adesao, type: date}
+      data_saida: {source: dt_cancelamento, type: date}
+
+  - source_entity: receitas
+    target_entity: receita
+    # receita é OPCIONAL no pacote: sem ela, sinistralidade/visão executiva ficam
+    # indisponíveis por falta de dado (Capability Readiness) — nunca inventadas
+    required: false
+    load_strategy: COMPETENCIA_SNAPSHOT
+    fields:
+      competencia: {source: competencia, type: month, date_format: "%Y-%m"}
+      plano_codigo: {source: cod_plano, normalize: [strip, upper]}
+      quantidade_beneficiarios: {source: qtd_vidas, type: int}
+      receita_contraprestacao: {source: valor_contraprestacao, type: decimal}
+
+  - source_entity: eventos
+    target_entity: evento_assistencial
+    required: true
+    load_strategy: COMPETENCIA_SNAPSHOT
+    fields:
+      source_record_id: {source: id_item, normalize: [strip]}
+      beneficiario_codigo: {source: matricula, normalize: [strip, upper]}
+      prestador_codigo: {source: cod_prestador, normalize: [strip, upper]}
+      procedimento_codigo: {source: cod_procedimento, normalize: [strip, upper]}
+      data_evento: {source: dt_atendimento, type: date}
+      # DECISÃO DE ONBOARDING registrada: competência = mês de ATENDIMENTO
+      competencia: {source: dt_atendimento, type: month}
+      tipo_atendimento:
+        source: tipo_guia
+        normalize: [strip]
+        map: {"1": consulta, "2": exame, "3": internacao, "4": pronto_socorro,
+              "5": terapia, "6": cirurgia, "7": opme}
+      quantidade: {source: qtd, type: int, default: 1}
+      valor_apresentado: {source: vl_apresentado, type: decimal}
+      valor_glosado: {source: vl_glosa, type: decimal, default: 0}
+      valor_pago: {source: vl_pago, type: decimal}
+      valor_coparticipacao: {source: vl_coparticipacao, type: decimal, default: 0}

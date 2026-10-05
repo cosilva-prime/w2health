@@ -1,0 +1,11 @@
+cod_especialidade;nome_especialidade;grupo
+ESP-CLIN;Clínica Médica;clinica
+ESP-CARD;Cardiologia;clinica
+ESP-ORTO;Ortopedia;cirurgica
+ESP-PED;Pediatria;clinica
+ESP-GINE;Ginecologia e Obstetrícia;clinica
+ESP-ONCO;Oncologia;clinica
+ESP-IMG;Diagnóstico por Imagem;diagnostico
+ESP-LAB;Patologia Clínica;diagnostico
+ESP-FISIO;Fisioterapia;terapia
+ESP-CIRG;Cirurgia Geral;cirurgica

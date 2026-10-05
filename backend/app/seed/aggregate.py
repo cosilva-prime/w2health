@@ -137,6 +137,12 @@ def rebuild_aggregations(session: Session, tenant_id: str = DEFAULT_TENANT) -> d
                        COUNT(*)                                                     AS eventos
                 FROM eventos_assistenciais WHERE tenant_id = :tenant GROUP BY competencia
             ) ev ON ev.competencia = c.competencia
+            -- Fase 2: só a janela de dados do PRÓPRIO tenant (o calendário é global)
+            WHERE c.competencia BETWEEN
+                  (SELECT min(m) FROM (SELECT min(competencia) AS m FROM eventos_assistenciais WHERE tenant_id = :tenant
+                                       UNION ALL SELECT min(competencia) FROM receitas WHERE tenant_id = :tenant) j)
+              AND (SELECT max(m) FROM (SELECT max(competencia) AS m FROM eventos_assistenciais WHERE tenant_id = :tenant
+                                       UNION ALL SELECT max(competencia) FROM receitas WHERE tenant_id = :tenant) j)
             """
         ),
         p,
@@ -272,6 +278,11 @@ def rebuild_aggregations(session: Session, tenant_id: str = DEFAULT_TENANT) -> d
                   ON b.tenant_id = :tenant
                  AND b.data_adesao <= c.competencia
                  AND (b.data_saida IS NULL OR b.data_saida > c.competencia)
+                WHERE c.competencia BETWEEN
+                      (SELECT min(m) FROM (SELECT min(competencia) AS m FROM eventos_assistenciais WHERE tenant_id = :tenant
+                                           UNION ALL SELECT min(competencia) FROM receitas WHERE tenant_id = :tenant) j)
+                  AND (SELECT max(m) FROM (SELECT max(competencia) AS m FROM eventos_assistenciais WHERE tenant_id = :tenant
+                                           UNION ALL SELECT max(competencia) FROM receitas WHERE tenant_id = :tenant) j)
                 GROUP BY c.competencia, b.id_contrato
             ),
             ben AS (

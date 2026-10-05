@@ -17,12 +17,12 @@ from app.repositories import analytics_repo as repo
 from app.saas.feature_filters import CONTRACT, DIMENSAO_FEATURE
 from app.security.deps import (
     TenantContext,
+    feature_error,
     get_tenant_context,
     get_tenant_db,
     require_feature,
     require_permission,
 )
-from app.security.errors import ApiError
 from app.security.rbac import Perm
 
 
@@ -71,7 +71,7 @@ def contrato_id_dep(
     if contrato_id is None:
         return None
     if not ctx.has_feature(CONTRACT):
-        raise ApiError("feature_unavailable", extra={"feature": CONTRACT})
+        raise feature_error(ctx, CONTRACT)
     # contrato de outro tenant é indistinguível de inexistente
     if repo.contrato_info(db, contrato_id) is None:
         raise HTTPException(404, f"Contrato inexistente: {contrato_id}")
@@ -82,4 +82,4 @@ def exigir_feature_da_dimensao(ctx: TenantContext, dimensao: str | None) -> None
     """Explicar por `prestador`/`contrato` expõe o módulo correspondente — exige a feature."""
     feat = DIMENSAO_FEATURE.get(dimensao or "")
     if feat is not None and not ctx.has_feature(feat):
-        raise ApiError("feature_unavailable", extra={"feature": feat})
+        raise feature_error(ctx, feat)
