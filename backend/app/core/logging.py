@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 
 _CONFIGURED = False
-_ctx: ContextVar[dict] = ContextVar("w2h_log_ctx", default={})
+_ctx: ContextVar[dict | None] = ContextVar("w2h_log_ctx", default=None)
 
 _CAMPOS_CTX = ("request_id", "correlation_id", "tenant_id", "pipeline_run_id",
                "ingestion_run_id", "source_connection_id")
@@ -28,7 +28,7 @@ _PADRAO = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"messag
 
 @contextmanager
 def log_context(**campos):
-    atual = dict(_ctx.get())
+    atual = dict(_ctx.get() or {})
     atual.update({k: v for k, v in campos.items() if v is not None})
     token = _ctx.set(atual)
     try:
@@ -38,7 +38,7 @@ def log_context(**campos):
 
 
 def set_log_context(**campos) -> None:
-    atual = dict(_ctx.get())
+    atual = dict(_ctx.get() or {})
     atual.update({k: v for k, v in campos.items() if v is not None})
     _ctx.set(atual)
 
@@ -51,7 +51,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        out.update(_ctx.get())
+        out.update(_ctx.get() or {})
         for k, v in record.__dict__.items():
             if k in _PADRAO or k.startswith("_"):
                 continue

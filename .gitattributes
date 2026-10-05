@@ -1,3 +1,6 @@
 * text=auto eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
+
+# Pacotes de dados de ORIGEM: bytes preservados (checksum do RAW depende disso)
+data_platform/examples/**/*.csv -text
