@@ -155,13 +155,13 @@ Tenant `vida-plena-csv` — "Operadora Vida Plena (fonte CSV)" — alimentado s�
 
 ## 8. Pendências honestas (fora desta fase)
 
-- Adapter de object storage real (S3/ADLS/GCS/MinIO): só a interface + filesystem local existem.
+- ~~Adapter de object storage real~~ — **resolvido na Fase 3** (adapter S3-compatível; Azure/GCS seguem como adapters futuros).
 - Conectores DATABASE/API: o cadastro aceita o tipo e a referência de segredo; **não há
   extração** implementada (validação de conectividade responde "não implementado").
 - Orquestração agendada: execução é sob demanda (upload/CLI). Sem agendador.
-- Pipeline síncrono na requisição de upload (limite 50 MB/arquivo, 20 arquivos) — cargas
-  grandes exigirão fila/worker.
-- Backup de produção **não existe**; existe um teste local de backup/restore
-  ([BACKUP_AND_RECOVERY.md](BACKUP_AND_RECOVERY.md)).
-- Vulnerabilidades conhecidas em dependências com correção só em versão major
-  ([DEPENDENCY_SECURITY.md](DEPENDENCY_SECURITY.md)).
+- ~~Pipeline síncrono na requisição de upload~~ — **resolvido na Fase 3** (fila + worker —
+  [WORKER_AND_QUEUE.md](WORKER_AND_QUEUE.md)).
+- Backup de produção **não existe**; existem o teste local de backup/restore e a
+  restauração por tenant ([BACKUP_AND_RECOVERY.md](BACKUP_AND_RECOVERY.md)).
+- ~~Vulnerabilidades conhecidas em dependências~~ — **resolvido na Fase 3** para tudo que vai
+  ao runtime ([DEPENDENCY_SECURITY.md](DEPENDENCY_SECURITY.md)).

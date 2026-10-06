@@ -1,72 +1,71 @@
 # Roadmap V1 — W2Health
 
-> Situação após a **Fase 2 — Fundação Operacional de Integração**. Itens de DISCOVERY
-> **não** são movidos para implementação sem decisão explícita.
+> Situação após a **Fase 3 — Production Readiness / Hardening**. Itens de DISCOVERY **não**
+> são movidos para implementação sem decisão explícita.
 
-## Concluído na Fase 2
+## Concluído na Fase 3
 
-| Item (era P0/P1) | Onde |
+| Item (era P0) | Onde |
 |---|---|
-| Papel de banco separado para pipelines, sob RLS, tenant obrigatório | `w2health_pipeline` — [PIPELINE_ARCHITECTURE.md](PIPELINE_ARCHITECTURE.md) |
-| Primeira fonte via Data Platform (arquivo → RAW → mapping → Silver → Gold), sem acoplar a API à origem | [PHASE2_DATA_PLATFORM.md](PHASE2_DATA_PLATFORM.md) |
-| Auditoria de leitura de dado individual de beneficiário | `data.beneficiary.*` (sem conteúdo clínico) |
-| Rate limit compartilhado entre réplicas | `RATE_LIMIT_BACKEND=database` (chaves com hash; Redis não exigido) |
-| Códigos de recuperação de MFA | hash, uso único, regeneração invalida os anteriores, auditado |
-| Capability Readiness automatizada (contratada × dados prontos) | [CAPABILITY_READINESS.md](CAPABILITY_READINESS.md) |
-| Logs estruturados com correlação por tenant/pipeline | `LOG_FORMAT=json` |
-| Revisão de dependências (SCA) — processo e primeira rodada | [DEPENDENCY_SECURITY.md](DEPENDENCY_SECURITY.md) |
-| Teste local de backup/restore (banco + RAW) | [BACKUP_AND_RECOVERY.md](BACKUP_AND_RECOVERY.md) |
+| Dependências vulneráveis (Next 14 crítico, Starlette, cryptography) | [DEPENDENCY_SECURITY.md](DEPENDENCY_SECURITY.md) — runtime com zero achados |
+| Carga fora da requisição HTTP (fila + worker, retry, lease, reaper, dead jobs) | [WORKER_AND_QUEUE.md](WORKER_AND_QUEUE.md) |
+| Adapter de object storage (S3-compatível) | [OBJECT_STORAGE.md](OBJECT_STORAGE.md) |
+| Imagem de runtime sem dependências de dev; containers não-root | [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) §4 |
+| Configuração de produção fail-closed; segredos por arquivo | [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) §2–3 |
+| Arquitetura de TLS/proxy + referência executável validada | [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) §1, §5, §8 |
+| Restauração por tenant (ferramenta + testes) | [BACKUP_AND_RECOVERY.md](BACKUP_AND_RECOVERY.md) |
+| Observabilidade (logs padronizados, métricas, health live/ready) | [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) |
+| CI com testes, lint, migrations, audit, imagens | `.github/workflows/ci.yml` |
+| Preparação para pentest, LGPD técnica, resposta a incidentes | [PENTEST_READINESS.md](PENTEST_READINESS.md), [LGPD_TECHNICAL_CONTROLS.md](LGPD_TECHNICAL_CONTROLS.md), [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md) |
 
-## P0 — bloqueia cliente real
+## P0 — ainda bloqueia cliente real em PRODUÇÃO
 
-| Item | Por quê |
-|---|---|
-| **Upgrade de dependências com vulnerabilidade conhecida**: Next 14 → 15/16 (crítica), FastAPI/Starlette (multipart do upload), cryptography ≥ 50 | [DEPENDENCY_SECURITY.md](DEPENDENCY_SECURITY.md) — correções só em versão major |
-| Infra de produção: TLS ponta a ponta, `COOKIE_SECURE=true`, proxy com limite de corpo, banco gerenciado com cifragem em repouso, segredos em cofre (KMS/Key Vault), domínio próprio | dado de saúde (LGPD art. 11) |
-| Adapter de RAW em object storage (S3/ADLS/GCS/MinIO) com cifragem e acesso restrito | hoje o RAW é filesystem/volume local |
-| Backup de produção cifrado com PITR, restauração **por tenant** automatizada e testada periodicamente; retenção/eliminação por tenant | não existe backup de produção |
-| Imagem de runtime sem dependências de dev (pytest/ruff) | superfície de ataque |
-| Execução de carga fora da requisição HTTP (fila/worker) para pacotes grandes | upload hoje é síncrono (limite 50 MB/arquivo) |
-| Pentest externo | validação independente |
-| Processo de onboarding jurídico (DPA, termo de uso, encarregado/DPO, procedimento de incidente) | LGPD |
+| Item | Por quê | Tipo |
+|---|---|---|
+| Escolher e provisionar a plataforma (nuvem/região), com TLS real, WAF/LB, rede privada | residência de dados, cifragem em trânsito | infraestrutura / decisão |
+| Banco gerenciado com backup automático, PITR, cifragem em repouso e teste de restauração periódico com RTO/RPO medidos | não existe backup de produção | infraestrutura |
+| Bucket de produção privado, cifrado (KMS), versionado/replicado | RAW é a única cópia do original | infraestrutura |
+| Gerenciador de segredos real montando `SECRETS_DIR`; cofre para `DATA_ENCRYPTION_KEY` | segredos hoje vêm de arquivo local na referência | infraestrutura |
+| Coleta de logs/métricas e alertas configurados (runbook) | operação sem visibilidade | infraestrutura |
+| Pentest externo + correção dos achados | validação independente | processo |
+| DPA, termo de uso, encarregado/DPO, suboperadores, procedimento de notificação validado pelo jurídico | LGPD | jurídico |
 
 ## P1 — V1 comercial
 
 | Item |
 |---|
-| Primeiro conector DATABASE ou API (o cadastro já aceita o tipo e a referência de segredo; falta a extração) |
-| Agendamento de cargas recorrentes por fonte |
-| Carga incremental (watermark/CDC) — hoje: UPSERT de dimensões e snapshot por competência |
-| Convite de usuário por e-mail com link de uso único (hoje: senha temporária exibida uma vez) |
-| SSO (OIDC/SAML) por tenant |
-| Listar e encerrar sessões ativas na conta; alerta de novo dispositivo |
-| FK `tenant_id → tenants.id` no data plane (após revisar teste histórico e janela de lock) |
-| Readiness com frescor e cobertura (ex.: "última competência há > 2 meses") |
-| Tela de Data Quality para o **cliente** (hoje só no Admin Works2Data) |
-| Exportações (CSV/PDF) com auditoria e marca d'água de tenant — **não** criadas nesta fase |
-| Métricas por tenant e alertas operacionais (falha de carga, reconciliação FAIL) |
-| Lint herdado (17 achados de ruff em arquivos anteriores à Fase 2) |
-| Revisão da cor do delta de sinistralidade no card executivo (herdado do MVP) |
-| `?id_contrato=` documentado na v1.2 para a lista de beneficiários: a rota lê `contrato_id` (alinhar doc/rota) |
-| Faixa etária por competência (herdado do MVP) |
+| Gold incremental por competência afetada (hoje 114 s para 59 mil eventos — [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md)) |
+| Cache por (tenant, competência) da visão executiva e insights (p95 ~1,3–1,5 s) |
+| Política de retenção/eliminação por tenant automatizada (dados + RAW + aviso de expiração em backups) |
+| Primeiro conector DATABASE ou API (cadastro e referência de segredo já existem; falta extração) |
+| Agendamento de cargas recorrentes; carga incremental (watermark/CDC) |
+| `SecretProvider` de nuvem (`vault:`) para credenciais de integração |
+| Scan de imagens (Trivy/Grype) e assinatura de imagens no registro |
+| Convite de usuário por e-mail com link de uso único; SSO (OIDC/SAML) por tenant |
+| Listar/encerrar sessões ativas; alerta de novo dispositivo e de anomalia em conta administrativa |
+| FK `tenant_id → tenants.id` no data plane |
+| Readiness com frescor e cobertura |
+| Tela de Data Quality para o cliente |
+| Exportações (CSV/PDF) com auditoria, marca d'água e proteção contra fórmula — **não** criadas |
+| Revisão da cor do delta de sinistralidade no card executivo; `?id_contrato=` × `contrato_id` (herdados) |
 
 ## P2 — pós-V1
 
 | Item |
 |---|
-| Schema/banco dedicado para clientes que exijam isolamento físico (estratégias B/C de MULTI_TENANCY) |
-| Histórico de dimensões (SCD2) e linhagem por versão |
-| Billing/medição de uso por tenant |
-| Preferências por usuário (dashboards salvos, filtros favoritos) |
-| Internacionalização da interface |
-| Tema escuro |
+| CSP com nonce no frontend (remover `'unsafe-inline'` de `script-src`) |
+| Tailwind 4 (remove a cadeia de advisories de build) e Next 16 |
+| Adapters Azure Blob/ADLS ou GCS se a plataforma escolhida exigir |
+| Fila em Redis/SQS se o volume superar o padrão PostgreSQL |
+| Schema/banco dedicado por cliente (estratégias B/C de MULTI_TENANCY) |
+| Histórico de dimensões (SCD2) |
+| Billing/medição de uso; preferências por usuário; i18n; tema escuro |
 
 ## DISCOVERY — ainda não implementar
 
-Reajuste contratual (motor de simulação) · receita por contrato e sinistralidade
-contratual · receita atribuída por beneficiário / "sinistralidade individual" · previsão,
-ML e projeções · LLM/chatbot de narrativa · conectores específicos MV/Tasy/Benner/Datasul/TISS ·
-Data Lake físico, Kafka, Kubernetes, microserviços, Airflow, Spark, Data Mesh ·
-funcionalidades clínicas.
+Reajuste contratual · receita por contrato e sinistralidade contratual · "sinistralidade
+individual" · previsão, ML e projeções · LLM/chatbot · conectores MV/Tasy/Benner/Datasul/TISS ·
+Data Lake físico, Kafka, Kubernetes, service mesh, microserviços, Airflow, Spark, Databricks,
+Data Mesh · funcionalidades clínicas.
 Referências: [DISCOVERY_GESTAO_SAUDE.md](DISCOVERY_GESTAO_SAUDE.md),
 [EVOLUCAO_FEEDBACK_ESPECIALISTA.md](EVOLUCAO_FEEDBACK_ESPECIALISTA.md).

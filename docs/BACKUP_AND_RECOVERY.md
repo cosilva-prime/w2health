@@ -1,58 +1,71 @@
 # Backup e recuperação — W2Health
 
-> **Não existe backup de produção.** Não há ambiente de produção. O que existe é um
-> **teste local de backup/restore** que prova que o banco (com RLS) e o RAW podem ser
-> copiados e restaurados sem perda — e define o que a produção vai precisar.
+> **Não existe backup de produção** porque não existe ambiente de produção. O que existe:
+> (1) procedimento operacional formal para quando houver; (2) teste local de backup/restore
+> do banco inteiro + RAW; (3) ferramenta testada de **restauração lógica por tenant**.
+> Valores de RPO/RTO abaixo são **hipóteses técnicas iniciais**, não SLA comercial.
 
 ## 1. O que precisa de backup
 
-| Ativo | Onde (DEV/Compose) | Por quê |
+| Ativo | Onde | Por quê | Como (produção) |
+|---|---|---|---|
+| PostgreSQL | banco gerenciado | control plane (tenants, usuários, planos, auditoria, segredos cifrados, fila) + data plane (Silver, Gold, metadados de ingestão) | snapshot diário + WAL contínuo (PITR) do provedor, cifrado |
+| RAW (object storage) | bucket `w2health-raw`, prefixo `tenant/<id>/` | **única cópia do dado original** do cliente | versionamento + replicação para outra zona/região (ou backup do bucket) |
+| Configuração | variáveis/segredos do deployment, mappings (Git), imagens versionadas | reconstruir o ambiente | Git + registro de imagens + gerenciador de segredos |
+| `DATA_ENCRYPTION_KEY` | gerenciador de segredos | sem ela, MFA e segredos de tenant no backup são ilegíveis | backup próprio, **separado** dos dados |
+
+## 2. Procedimento operacional (proposta)
+
+| Item | Proposta inicial (hipótese, a validar com cliente/contrato e custo) |
+|---|---|
+| Banco — backup completo | snapshot diário automático |
+| Banco — incremental | WAL contínuo / PITR habilitado |
+| Retenção | diários 35 dias + mensais 12 meses (alinhar à política de eliminação de cada contrato) |
+| RAW | versionamento do bucket + replicação; retenção das versões antigas: 35 dias |
+| Criptografia | em repouso (KMS do provedor) e em trânsito; acesso aos backups por papel restrito e auditado |
+| **RPO** (perda máxima) | ≤ 15 min para o banco (PITR); RAW: zero após confirmação do upload (objeto gravado antes do job) |
+| **RTO** (tempo para voltar) | ≤ 4 h para DR completo; ≤ 1 h para restauração lógica de um tenant |
+| Teste de restauração | mensal (restore num ambiente isolado + `backup-restore-check` adaptado) e a cada mudança relevante de esquema |
+| Validação após restore | `alembic current`, contagens por tenant, RLS ativo, `/health/ready`, amostra de indicadores, reconciliação |
+
+## 3. Disaster recovery × restauração de UM tenant
+
+| | DR completo | Restauração lógica de um tenant |
 |---|---|---|
-| PostgreSQL (`w2health`) | volume `pgdata` | control plane (tenants, usuários, planos, auditoria, segredos cifrados) + data plane (Silver, Gold, metadados de ingestão) |
-| RAW | volume `rawdata` (`/var/lib/w2health/raw`) | **única cópia do dado original** recebido do cliente |
-| Mappings | `data_platform/mappings/` (Git) | versionados no repositório |
-| `DATA_ENCRYPTION_KEY` | `.env` (DEV) / cofre (produção) | sem ela, segredos de tenant e MFA no backup são ilegíveis — guardar **separado** do backup |
+| Quando | perda do banco/região, corrupção geral | erro operacional ou carga indevida que afetou só um cliente |
+| Ferramenta | snapshot/PITR do provedor (ou `pg_restore` do dump) | `python -m app.ops.tenant_backup` |
+| Efeito | banco inteiro volta a um ponto no tempo (todos os tenants) | só as linhas do tenant voltam ao estado do arquivo; demais tenants intocados |
+| Limitação | — | ids preservados: restaurar em **outro** banco que já use os mesmos ids falha (fazer no mesmo ambiente ou num banco vazio do mesmo esquema); segredos exigem a mesma `DATA_ENCRYPTION_KEY` |
 
-## 2. Teste local de backup/restore
+O PostgreSQL não restaura "um tenant" a partir de um snapshot físico. Procedimento para
+voltar um tenant a um ponto anterior **sem** um export daquele momento: restaurar o snapshot
+num banco temporário → `tenant_backup export` dali → `tenant_backup import` no banco de produção.
 
-```powershell
-./scripts/backup-restore-check.ps1     # ou: make backup-check
+### Ferramenta de restauração por tenant
+
+```bash
+python -m app.ops.tenant_backup export --tenant <id> --out tenant.tar.gz      # + RAW do prefixo
+python -m app.ops.tenant_backup verify --file tenant.tar.gz                    # manifesto e sha256
+python -m app.ops.tenant_backup import --file tenant.tar.gz --tenant <id> --confirmar <id>
 ```
 
-1. `pg_dump -Fc` do banco principal (somente leitura);
-2. restore num banco **temporário** `w2health_restore_check` — nunca no principal;
-3. compara contagens por tabela **e por tenant** (data plane, metadados de ingestão,
-   auditoria) e tabelas globais (tenants, usuários, vínculos, planos, features, versão do
-   Alembic);
-4. confere que as tabelas com RLS (ENABLE + FORCE) continuam protegidas no restaurado;
-5. empacota o volume RAW (`tar.gz`) e confere a quantidade de arquivos;
-6. remove o banco temporário. Artefatos em `var/backups/` (gitignored — contêm dados).
+Garantias (testadas em `tests/test_tenant_backup.py`): manifesto com revisão Alembic e sha256
+por tabela/objeto; arquivo adulterado, de outro tenant, com linha de outro tenant ou de outro
+esquema é recusado; import em **uma transação** (apaga o estado atual do tenant e carrega o do
+arquivo — falhou, nada muda); `audit_logs` nunca é apagado (só entram linhas que faltam);
+sessões do tenant são revogadas; sequências ajustadas; assinatura (contagens + somas) do
+tenant idêntica à do export e outro tenant inalterado.
 
-### Execuções (2026-10-05, ambiente local Docker Compose)
+## 4. Testes executados
 
-| Item | 1ª execução (antes da carga via Docker) | 2ª execução (após carga do tenant `homolog-csv`) |
+| Data | Teste | Resultado |
 |---|---|---|
-| dump (formato custom) | 17,6 MB | 17,8 MB |
-| restore no banco temporário | 30 s | 18,8 s |
-| contagens tabela × tenant comparadas | 37 linhas — **iguais** | 51 linhas — **iguais** |
-| tabelas com RLS (ENABLE+FORCE) no restaurado | 27 | 27 |
-| RAW: arquivos no volume × no pacote | 0 × 0 (cargas anteriores rodaram fora do contêiner) | **8 × 8** |
-| resultado | PASS | **PASS** |
+| 2026-10-05 | `backup-restore-check` (banco inteiro + RAW), 2 execuções | PASS (37 e 51 contagens iguais; RAW 8/8) |
+| 2026-10-06 | `backup-restore-check` após a Fase 3 (inclui fila) | **PASS** — dump 20,3 MB, restore 53 s, 74 contagens tabela×tenant iguais, 27 tabelas com RLS, RAW 56/56 |
+| 2026-10-06 | `tenant_backup` — testes automatizados (4) | PASS — restauração idêntica após "incidente" simulado; recusas de arquivo adulterado/tenant/esquema |
+| 2026-10-06 | `tenant_backup` no deployment de referência (RAW em S3) | PASS — export 38 tabelas + 8 objetos, verify, import |
 
-## 3. Restauração por tenant
-
-O dump é do banco inteiro. Restaurar **um** tenant sem afetar os outros não é um
-`pg_restore` direto: o procedimento é restaurar num banco temporário e copiar só as linhas
-do tenant (todas as tabelas do data plane têm `tenant_id`) com o papel dono, numa
-transação, depois de apagar as linhas atuais do tenant. **Não está automatizado** — é
-pendência P0 para produção ([V1_ROADMAP.md](V1_ROADMAP.md)).
-
-## 4. Requisitos para produção (não implementados)
-
-- banco gerenciado com backup automático, PITR e cifragem em repouso;
-- retenção definida em contrato (ex.: diária 35 dias + mensal 12 meses) e eliminação por
-  tenant ao fim do contrato (LGPD);
-- RAW em object storage com versionamento, cifragem (KMS) e replicação;
-- teste de restauração **periódico** (este script como base), com RTO/RPO medidos;
-- chave de criptografia em cofre, com rotação e backup próprio;
-- acesso aos backups restrito e auditado.
+## 5. Pendências (dependem da escolha de infraestrutura)
+Backup automático de produção, PITR, replicação do bucket, cofre da chave de criptografia,
+rotina mensal de teste de restauração com RTO/RPO medidos — itens do
+[PRODUCTION_RELEASE_CHECKLIST.md](PRODUCTION_RELEASE_CHECKLIST.md) marcados FAIL até existirem.

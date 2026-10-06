@@ -173,6 +173,22 @@ class S3CompatibleStorage:
                 raise self._map(e) from e
         return len(chaves)
 
+    def ensure_bucket(self) -> None:
+        """Cria o bucket se não existir (deployment). Acesso público não é habilitado."""
+        from botocore.exceptions import ClientError
+
+        try:
+            self.client.head_bucket(Bucket=self.bucket)
+        except ClientError as e:
+            if self._code(e) not in ("404", "NoSuchBucket", "NotFound"):
+                raise self._map(e) from e
+            try:
+                self.client.create_bucket(Bucket=self.bucket)
+            except Exception as e2:  # noqa: BLE001
+                raise self._map(e2) from e2
+        except Exception as e:  # noqa: BLE001
+            raise self._map(e) from e
+
     def ping(self) -> None:
         try:
             self.client.head_bucket(Bucket=self.bucket)

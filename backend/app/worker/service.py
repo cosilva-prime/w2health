@@ -131,6 +131,7 @@ class Worker:
                 espera = min(espera * 2, 30.0)  # banco/fila fora: recua sem martelar
             if not trabalhou:
                 stop.wait(espera)
+        self.unregister()
         log.info("worker.stop", extra={"event": "worker.stop", "worker_id": self.worker_id})
 
     # ------------------------------------------------------------------ recuperação
@@ -276,6 +277,17 @@ class Worker:
     def _set_current(self, job_id: int | None) -> None:
         self._current = job_id
 
+    def unregister(self) -> None:
+        """Desligamento gracioso: sai da contagem de workers ativos na hora."""
+
+        def _apaga() -> None:
+            with PipelineSession() as s:
+                s.execute(text("DELETE FROM worker_heartbeats WHERE worker_id = :w"),
+                          {"w": self.worker_id})
+                s.commit()
+
+        _sem_erro(_apaga)
+
     def beat(self) -> None:
         """Heartbeat do processo: arquivo local (healthcheck do contêiner) + linha no banco."""
         with contextlib.suppress(OSError):
@@ -299,6 +311,11 @@ class Worker:
                 },
             )
             s.commit()
+
+
+def _sem_erro(fn) -> None:
+    with contextlib.suppress(Exception):
+        fn()
 
 
 def healthcheck(max_age_seconds: int = 120) -> bool:

@@ -1,4 +1,10 @@
-# Arquitetura do pipeline — W2Health (Fase 2)
+# Arquitetura do pipeline — W2Health (Fase 2 → Fase 3)
+
+> **Fase 3:** a execução passou a ser **assíncrona**. A requisição faz só a recepção
+> (validar arquivos → RAW → ingestão `QUEUED` + job, no mesmo commit) e responde `202`; os
+> passos 3–8 abaixo rodam no **worker**, que reconstrói o `PipelineContext` a partir dos ids
+> do job e o revalida sob RLS. Retry, lease, reaper e isolamento do worker:
+> [WORKER_AND_QUEUE.md](WORKER_AND_QUEUE.md). As garantias e a ordem das etapas abaixo não mudaram.
 
 Código: `backend/app/data_platform/` (orquestrador em `runner.py`). Visão geral e diagramas:
 [PHASE2_DATA_PLATFORM.md](PHASE2_DATA_PLATFORM.md).
@@ -80,11 +86,11 @@ Todas as sessões são do papel de pipeline e amarradas ao tenant (`bind_tenant`
 
 | Entrada | Quem | Observação |
 |---|---|---|
-| `POST /api/admin/tenants/{t}/sources/{id}/uploads` | SUPER_ADMIN | upload controlado (multipart `files`), executa em threadpool |
+| `POST /api/admin/tenants/{t}/sources/{id}/uploads` | SUPER_ADMIN | upload controlado (multipart `files`): recepção na requisição, **processamento no worker** (202 + `job_id`) |
 | `python -m app.data_platform.cli ingest --tenant … --source … --dir …` | operador | mesma função `run_file_ingestion` |
 | `python -m app.seed.run` | DEV | Caminho A: registra a fonte SYNTHETIC e a ingestão com a mesma linhagem |
 
 ## 7. Limites conhecidos
 
-Execução síncrona (sem fila/worker); sem agendamento; sem conectores DATABASE/API; RAW só em
-filesystem local. Ver [PHASE2_DATA_PLATFORM.md](PHASE2_DATA_PLATFORM.md) §8.
+Sem agendamento; sem conectores DATABASE/API. (Execução síncrona e RAW só local eram limites
+da Fase 2 — resolvidos na Fase 3: fila + worker e adapter S3.)

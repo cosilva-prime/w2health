@@ -126,7 +126,7 @@ Detalhe em [FEATURE_CATALOG.md](FEATURE_CATALOG.md).
 | Configuração funcional | `tenant_settings` (JSON) | catálogo fechado + validação + quem pode editar (`tenant_admin` × `platform`) |
 | Credenciais de integração | `tenant_secrets` | Fernet (MultiFernet, rotação de chave); **write-only** na API; `reveal()` só para uso interno de conectores |
 | Segredo MFA | `users.mfa_secret_enc` | Fernet |
-| Chaves da aplicação | `JWT_SECRET_KEY`, `DATA_ENCRYPTION_KEY`, `APP_DB_PASSWORD` | variáveis de ambiente (`.env` gitignored); obrigatórias em produção/staging (a API não sobe sem elas) |
+| Chaves da aplicação | `JWT_SECRET_KEY`, `DATA_ENCRYPTION_KEY`, URLs dos 3 papéis de banco, credencial do object storage, `METRICS_TOKEN` | variável de ambiente **ou** arquivo em `SECRETS_DIR` (Fase 3); obrigatórias e validadas em produção/staging (API e worker não sobem) |
 
 `source_connections.configuration` aceita só chaves conhecidas e não sensíveis por tipo;
 credenciais entram apenas como `secret_reference` (`tenant:<chave>` no cofre do tenant;
@@ -152,7 +152,10 @@ Eventos: `auth.login`, `auth.login_failed`, `auth.login_blocked`, `auth.account_
 
 - Headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
   `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy`, `Permissions-Policy`,
-  `X-Request-ID`; **`Cache-Control: no-store`** em toda resposta de `/api`.
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` (Fase 3), HSTS em
+  produção (Fase 3), `X-Request-ID`; **`Cache-Control: no-store`** em toda resposta de `/api`.
+  Frontend (Fase 3): CSP, X-Frame, nosniff, Referrer-Policy, Permissions-Policy, COOP, sem
+  `X-Powered-By`.
 - CORS: origens explícitas, credenciais só para essas origens, métodos/cabeçalhos listados.
 - Erros: corpo `{detail, code, request_id}`; exceção não tratada → 500 genérico (sem stack
   trace). Swagger/OpenAPI desligados em produção/staging.
@@ -206,3 +209,21 @@ cd backend && uv run pytest tests/test_tenant_isolation.py tests/test_rls.py tes
 Novos eventos de auditoria: `pipeline.ingestion_completed|failed|duplicate`,
 `integration.source_created|source_status|source_validated|readiness_refreshed|onboarding_decision`,
 `data.beneficiary.*`, `mfa.recovery_code_used`, `mfa.recovery_codes_generated`.
+
+## 15. Fase 3 — produção
+
+| Controle | Implementação | Teste / evidência |
+|---|---|---|
+| Configuração fail-closed | ambientes formais; em staging/production API **e worker** não sobem sem segredos válidos, CORS https explícito, Trusted Hosts, papéis de banco distintos, storage, MFA de plataforma, rate limit compartilhado, logs JSON | `test_producao_fail_closed_sem_fallback_inseguro` (15 regras), `test_worker_nao_sobe_*`; validado no deployment de referência |
+| Segredos por arquivo | `SECRETS_DIR` (um arquivo por campo) — formato dos gerenciadores de segredo | [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) §3 |
+| Proxy confiável | IP real só de `FORWARDED_ALLOW_IPS` (uvicorn); a aplicação não lê X-Forwarded-*; Trusted Hosts | `test_ip_do_cliente_*`, `test_trusted_hosts_*` |
+| Worker isolado | contexto por job; job revalidado sob RLS; RAW conferido por sha256; fila sem payload | `test_worker.py` (18) |
+| Object storage | chave validada em todo adapter; prefixo por tenant; imutável | `test_object_storage.py` (46, local + MinIO) |
+| Menor privilégio no banco | runtime e pipeline: sem SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE, sem ownership, sem CREATE no schema; runtime só LÊ a fila; pipeline sem acesso a identidade/sessões/segredos | `test_papeis_de_runtime_e_pipeline_com_menor_privilegio` |
+| Upload endurecido | MIME, binário/magic bytes, colunas, bytes por linha, linhas, nomes; rate limit por usuário; Starlette 1.7 | `test_upload_*` |
+| Containers | não-root (uid 10001), runtime sem ferramentas de dev, read-only + cap_drop no compose de referência | CI `images`; validação local |
+| Restauração por tenant | export/import com manifesto + sha256, transação única, outros tenants intocados | `test_tenant_backup.py` |
+| Observabilidade sem dado sensível | logs JSON com `service`, `user_id`, `job_id`, `duration_ms`; métricas sem rótulo de tenant | `test_log_*`, `test_metrics_*` |
+
+Auditoria acrescentada: `pipeline.ingestion_queued`, `pipeline.ingestion_cancelled`,
+`pipeline.job_retry`, `pipeline.job_cancel`. Checklist de pentest: [PENTEST_READINESS.md](PENTEST_READINESS.md).

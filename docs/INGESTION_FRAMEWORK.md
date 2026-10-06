@@ -64,8 +64,12 @@ Testes: `test_mesmo_pacote_nao_duplica`,
 ## 5. Upload controlado (Admin)
 
 `/admin/integracoes` → escolher tenant → fonte FILE ativa → selecionar os CSVs → "Processar
-carga". A resposta mostra status, a barra de estágios, recebidos/válidos/rejeitados/erros/
-avisos e o resultado da reconciliação; "Detalhes" abre passos, DQ, reconciliação e os
+carga". **Fase 3:** a resposta chega em segundos com `QUEUED` + `job_id` (o RAW já está
+gravado); a lista de execuções se atualiza sozinha até o desfecho (status, barra de estágios,
+tentativas, duração, recebidos/válidos/rejeitados/erros/avisos, reconciliação). Reenvio
+idêntico ou arquivo recusado respondem na hora (200). Limites configuráveis: tamanho e
+quantidade de arquivos, colunas (200), bytes por linha (64 KB), linhas (5 milhões), MIME,
+binário disfarçado de `.csv`; uploads por usuário/hora (30); "Detalhes" abre passos, DQ, reconciliação e os
 objetos RAW. Apenas SUPER_ADMIN (`platform:tenants:manage`); tudo auditado.
 
 ## 6. Pacote de exemplo

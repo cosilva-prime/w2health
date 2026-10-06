@@ -1,5 +1,9 @@
 # RAW storage — W2Health (Fase 2)
 
+> **Fase 3:** o protocolo virou `ObjectStorage` (put/get/exists/head/checksum/list/ping) com
+> adapter local **e** adapter S3-compatível; a chave é validada por todo adapter em toda
+> operação. Detalhe: [OBJECT_STORAGE.md](OBJECT_STORAGE.md).
+
 O PostgreSQL **não** é o data lake. O payload original recebido (bytes exatos do arquivo)
 vai para um armazenamento de objetos; o banco guarda só metadados em `raw_objects`.
 Código: `backend/app/data_platform/storage.py`.
@@ -18,7 +22,8 @@ class RawStorage(Protocol):
 | Implementação | Estado | Configuração |
 |---|---|---|
 | `LocalFilesystemRawStorage` | **implementada** (DEV/teste/Compose) | `RAW_STORAGE_BACKEND=local`, `RAW_STORAGE_ROOT` (Compose: volume `rawdata` em `/var/lib/w2health/raw`) |
-| S3 / ADLS / GCS / MinIO | **não implementadas** — mesmo protocolo; nenhum outro módulo monta caminho físico | `RAW_STORAGE_BACKEND=<adapter>` (outro valor hoje gera erro explícito) |
+| `S3CompatibleStorage` (AWS S3, MinIO, Ceph, R2…) | **implementada na Fase 3** — escrita condicional (imutável), sha256 em metadado, erros traduzidos para retry | `RAW_STORAGE_BACKEND=s3`, `S3_*` — ver [OBJECT_STORAGE.md](OBJECT_STORAGE.md) |
+| Azure Blob / ADLS, GCS | não implementadas — mesmo protocolo | — |
 
 ## 2. Chaves (cloud-agnostic, prefixo por tenant)
 

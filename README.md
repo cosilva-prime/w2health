@@ -161,6 +161,23 @@ Fora do container: `cd backend && uv sync && uv run pytest`.
 
 ---
 
+## Produção (Fase 3)
+
+* O compose de desenvolvimento sobe também o **worker** (`docker compose up -d`): cargas de
+  arquivo são enfileiradas pela API (resposta `202` + `job_id`) e processadas por ele.
+  Operação da fila: Admin → Integrações → Fila; `docker compose exec worker python -m app.worker drain`.
+* Referência de deployment "como produção" (TLS no proxy, migrations em job separado, papéis
+  de banco distintos, object storage S3, segredos por arquivo, contêineres não-root):
+  `python deploy/gen_prod_secrets.py` e
+  `docker compose -f docker-compose.production.example.yml up -d --build` —
+  ver [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md).
+* Testes em contêiner: `docker compose --profile test run --rm --build backend-test`.
+* CI: `.github/workflows/ci.yml`. Gate de release: [docs/PRODUCTION_RELEASE_CHECKLIST.md](docs/PRODUCTION_RELEASE_CHECKLIST.md).
+* Restauração de um tenant: `python -m app.ops.tenant_backup --help`.
+* Estado e classificação: [docs/PHASE3_PRODUCTION_READINESS.md](docs/PHASE3_PRODUCTION_READINESS.md).
+
+---
+
 ## Estrutura de diretórios
 
 ```

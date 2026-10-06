@@ -34,8 +34,8 @@ CAPABILITIES_READY → HOMOLOGATED → ACTIVE`.
 | 9 | Cadastrar a fonte FILE apontando o mapping | SUPER_ADMIN | Admin → Integrações → Nova fonte | `SOURCE_REGISTERED` |
 | 10 | Validar a fonte | SUPER_ADMIN | Integrações → Validar | `CONNECTION_VALIDATED` |
 | 11 | Receber o pacote de **homologação** (≥ 13 competências) | Cliente | canal acordado | arquivos recebidos |
-| 12 | Processar a carga | SUPER_ADMIN | Integrações → Importação controlada (ou `cli ingest`) | ingestão com estágio e status |
-| 13 | Se `FAILED`: ler DQ/reconciliação, corrigir mapping **ou** pedir correção ao cliente e reenviar | Engenharia de dados | Integrações → Detalhes | nova ingestão |
+| 12 | Processar a carga | SUPER_ADMIN | Integrações → Importação controlada (ou `cli ingest`) — resposta `QUEUED` + job; o worker processa e a lista atualiza sozinha | ingestão com estágio, status, tentativas e duração |
+| 13 | Se `FAILED`: ler DQ/reconciliação, corrigir mapping **ou** pedir correção ao cliente e reenviar (falha de **infraestrutura** = "Reexecutar" no painel da fila) | Engenharia de dados | Integrações → Detalhes / Fila | nova ingestão ou job reexecutado |
 | 14 | Conferir Data Quality (WARNING/INFO, coberturas) e registrar aceite dos avisos | Engenharia de dados | Detalhes → Data Quality | `DATA_QUALITY_VALIDATED` |
 | 15 | Conferir reconciliação origem × Silver × Gold | Engenharia de dados | Detalhes → Reconciliação | todas PASS (ou WARNING justificado) → `RECONCILED` |
 | 16 | Conferir capability readiness (contratada × dados prontos × disponível) | SUPER_ADMIN | Integrações → Capabilities | `CAPABILITIES_READY`; motivos dos itens `NOT_READY` comunicados |
@@ -62,3 +62,12 @@ CAPABILITIES_READY → HOMOLOGATED → ACTIVE`.
 `vida-plena-csv` foi carregado exatamente por este caminho (passos 9–16) com o pacote de
 exemplo; `homolog-csv` foi carregado pela API dentro do Docker Compose. Ver
 [DEMO.md](DEMO.md) §Fase 2.
+
+## Pré-requisito antes do passo 1 com cliente REAL (Fase 3)
+
+O ambiente precisa estar aprovado no [PRODUCTION_RELEASE_CHECKLIST.md](PRODUCTION_RELEASE_CHECKLIST.md)
+(sem FAIL em itens P0): infraestrutura com TLS, banco gerenciado com backup/PITR, object
+storage privado e cifrado, segredos no gerenciador, worker com healthcheck, alertas do
+[OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md), DPA/LGPD assinados. Para piloto controlado,
+ver a classificação e as condições em [PHASE3_PRODUCTION_READINESS.md](PHASE3_PRODUCTION_READINESS.md).
+
