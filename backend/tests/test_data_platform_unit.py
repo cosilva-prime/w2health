@@ -44,7 +44,9 @@ def test_pipeline_context_carrega_ids_de_correlacao():
     ctx2 = ctx.with_runs(pipeline_run_id=7, ingestion_run_id=9)
     assert ctx2.log_fields() == {"tenant_id": "tenant-a", "source_connection_id": 3,
                                  "pipeline_run_id": 7, "ingestion_run_id": 9,
-                                 "correlation_id": ctx.correlation_id}
+                                 "correlation_id": ctx.correlation_id, "job_id": None}
+    # Fase 3: o job entra no contexto de log do worker
+    assert ctx2.with_runs(job_id=5).log_fields()["job_id"] == 5
 
 
 # ============================================================================ mapping

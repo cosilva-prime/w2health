@@ -48,7 +48,31 @@ interface Run {
   error_summary: Record<string, unknown>;
   correlation_id: string | null;
   reconciliation?: string | null;
+  job?: Job | null;
 }
+
+interface Job {
+  id: number;
+  tenant_id: string;
+  ingestion_run_id: number;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  next_attempt_at: string | null;
+  duration_ms: number | null;
+  last_error: string | null;
+  error_class: string | null;
+  stuck: boolean;
+  can_retry: boolean;
+  can_cancel: boolean;
+}
+
+const EM_ANDAMENTO = new Set(["QUEUED", "RUNNING"]);
+const fmtDur = (ms: number | null | undefined) =>
+  ms == null ? "—" : ms < 1000 ? `${ms} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60000)} min`;
 
 interface Source {
   id: number;
@@ -77,6 +101,7 @@ const STAGE_LABEL: Record<string, string> = {
 };
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = {
   SUCCESS: "success", PARTIAL: "warning", FAILED: "danger", RUNNING: "info", PENDING: "neutral",
+  QUEUED: "neutral", CANCELLED: "neutral",
   PASS: "success", WARNING: "warning", FAIL: "danger",
 };
 const fmt = (d: string | null) => (d ? new Date(d).toLocaleString("pt-BR") : "—");
@@ -112,9 +137,84 @@ function StageBar({ stage, status }: { stage: string | null; status: string }) {
   );
 }
 
+function JobAcoes({ job, onDone }: { job: Job; onDone: () => void }) {
+  const [erro, setErro] = useState<string | null>(null);
+  const acao = async (tipo: "retry" | "cancel") => {
+    setErro(null);
+    try {
+      await apiSend(`/admin/jobs/${job.id}/${tipo}`, "POST");
+      onDone();
+    } catch (e) {
+      setErro((e as ApiError).message);
+    }
+  };
+  if (!job.can_retry && !job.can_cancel) return null;
+  return (
+    <span className="whitespace-nowrap">
+      {job.can_retry && <Button size="sm" variant="ghost" onClick={() => acao("retry")}>Reexecutar</Button>}
+      {job.can_cancel && <Button size="sm" variant="ghost" onClick={() => acao("cancel")}>Cancelar</Button>}
+      {erro && <div className="max-w-xs text-[11px] text-rose-700">{erro}</div>}
+    </span>
+  );
+}
+
+function JobInfo({ job }: { job: Job }) {
+  return (
+    <div className="text-[11px] text-slate-500">
+      job #{job.id} · tentativa {job.attempts}/{job.max_attempts}
+      {job.stuck && <span className="ml-1 rounded bg-rose-100 px-1 text-rose-700">travado</span>}
+      {job.status === "QUEUED" && job.attempts > 0 && job.next_attempt_at && <> · nova tentativa {fmt(job.next_attempt_at)}</>}
+      {job.last_error && <div className="max-w-xs text-rose-700">{job.last_error}</div>}
+    </div>
+  );
+}
+
+function Fila() {
+  const { data, reload } = useApi<{
+    itens: Job[]; resumo: Record<string, number>; workers_ativos: number;
+    fila_mais_antiga_segundos: number | null; travados: number;
+  }>("/admin/jobs?limit=20", { refreshInterval: 5000 });
+  if (!data) return null;
+  return (
+    <Card title="Fila do pipeline (worker assíncrono)">
+      <div className="mb-3 flex flex-wrap gap-2 text-xs">
+        {["QUEUED", "RUNNING", "SUCCESS", "PARTIAL", "FAILED", "CANCELLED"].map((s) => (
+          <span key={s} className="rounded bg-slate-100 px-2 py-1">{s}: <b>{data.resumo[s] ?? 0}</b></span>
+        ))}
+        <span className={`rounded px-2 py-1 ${data.workers_ativos ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-700"}`}>
+          workers ativos: <b>{data.workers_ativos}</b>
+        </span>
+        {data.travados > 0 && <span className="rounded bg-rose-50 px-2 py-1 text-rose-700">travados: <b>{data.travados}</b></span>}
+        {data.fila_mais_antiga_segundos != null && (
+          <span className="rounded bg-slate-100 px-2 py-1">mais antigo na fila: <b>{fmtDur(data.fila_mais_antiga_segundos * 1000)}</b></span>
+        )}
+      </div>
+      <Table>
+        <thead><tr><Th>Job</Th><Th>Tenant</Th><Th>Status</Th><Th>Tentativas</Th><Th>Início</Th><Th>Duração</Th><Th>Erro</Th><Th /></tr></thead>
+        <tbody>
+          {data.itens.map((j) => (
+            <tr key={j.id}>
+              <Td className="font-mono text-xs">#{j.id}<div className="text-slate-400">ingestão #{j.ingestion_run_id}</div></Td>
+              <Td className="text-xs">{j.tenant_id}</Td>
+              <Td><StatusBadge tone={STATUS_TONE[j.status]}>{j.status}</StatusBadge>{j.stuck && <div className="text-[11px] text-rose-700">travado</div>}</Td>
+              <Td className="text-xs">{j.attempts}/{j.max_attempts}</Td>
+              <Td className="text-xs">{fmt(j.started_at ?? j.created_at)}</Td>
+              <Td className="text-xs">{fmtDur(j.duration_ms)}</Td>
+              <Td className="max-w-xs text-xs text-rose-700">{j.last_error ?? "—"}</Td>
+              <Td><JobAcoes job={j} onDone={() => reload()} /></Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </Card>
+  );
+}
+
 function VisaoGeral() {
   const { data, error, isLoading } = useApi<{ itens: Source[] }>("/admin/integrations");
   return (
+    <div className="space-y-4">
+    <Fila />
     <Card title="Fontes de todos os tenants">
       <DataState isLoading={isLoading && !data} error={error} empty={data?.itens.length === 0}>
         <Table>
@@ -154,13 +254,17 @@ function VisaoGeral() {
         </Table>
       </DataState>
     </Card>
+    </div>
   );
 }
 
 function TenantIntegracoes({ tenant }: { tenant: string }) {
   const base = `/admin/tenants/${tenant}`;
   const fontes = useApi<{ itens: Source[] }>(`${base}/sources`);
-  const runs = useApi<{ itens: Run[] }>(`${base}/ingestion-runs${qs({ limit: 30 })}`);
+  // enquanto houver carga na fila/em execução, a lista se atualiza sozinha
+  const runs = useApi<{ itens: Run[] }>(`${base}/ingestion-runs${qs({ limit: 30 })}`, {
+    refreshInterval: (d?: { itens: Run[] }) => (d?.itens.some((r) => EM_ANDAMENTO.has(r.status)) ? 3000 : 0),
+  });
   const [detalhe, setDetalhe] = useState<number | null>(null);
   const recarregar = () => {
     fontes.reload();
@@ -206,20 +310,23 @@ function TenantIntegracoes({ tenant }: { tenant: string }) {
       <Card title="Execuções (ingestões)">
         <DataState isLoading={runs.isLoading && !runs.data} error={runs.error} empty={runs.data?.itens.length === 0}>
           <Table>
-            <thead><tr><Th>#</Th><Th>Status</Th><Th>Jornada da carga</Th><Th>Registros</Th><Th>Competências</Th><Th>Reconciliação</Th><Th>Data/hora</Th><Th /></tr></thead>
+            <thead><tr><Th>#</Th><Th>Status</Th><Th>Jornada da carga</Th><Th>Registros</Th><Th>Competências</Th><Th>Reconciliação</Th><Th>Início · duração</Th><Th /></tr></thead>
             <tbody>
               {runs.data?.itens.map((r) => (
                 <tr key={r.id}>
                   <Td className="font-mono text-xs">{r.id}</Td>
-                  <Td><StatusBadge tone={STATUS_TONE[r.status]}>{r.status}</StatusBadge></Td>
+                  <Td><StatusBadge tone={STATUS_TONE[r.status]}>{r.status}</StatusBadge>{r.job && <JobInfo job={r.job} />}</Td>
                   <Td>{r.duplicate_of
                     ? <span className="text-xs text-slate-500">reenvio idêntico à #{r.duplicate_of} — nada reprocessado</span>
                     : <StageBar stage={r.stage} status={r.status} />}</Td>
                   <Td className="text-xs">{r.records_received} recebidos · {r.records_valid} válidos · {r.records_rejected} rejeitados<div className="text-slate-400">{r.errors} erros · {r.warnings} avisos</div></Td>
                   <Td className="text-xs">{r.competencia_inicio ? `${r.competencia_inicio.slice(0, 7)} a ${r.competencia_fim?.slice(0, 7)}` : "—"}</Td>
                   <Td>{r.reconciliation ? <StatusBadge tone={STATUS_TONE[r.reconciliation]}>{r.reconciliation}</StatusBadge> : "—"}</Td>
-                  <Td className="text-xs">{fmt(r.started_at)}<div className="text-slate-400">{r.triggered_by}</div></Td>
-                  <Td><Button size="sm" variant="ghost" onClick={() => setDetalhe(r.id)}>Detalhes</Button></Td>
+                  <Td className="text-xs">{fmt(r.job?.started_at ?? r.started_at)} · {fmtDur(r.job?.duration_ms)}<div className="text-slate-400">{r.triggered_by}</div></Td>
+                  <Td className="whitespace-nowrap">
+                    <Button size="sm" variant="ghost" onClick={() => setDetalhe(r.id)}>Detalhes</Button>
+                    {r.job && <JobAcoes job={r.job} onDone={recarregar} />}
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -279,17 +386,24 @@ function Upload({ base, fontes, onDone }: { base: string; fontes: Source[]; onDo
       )}
       {erro && <p className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{erro}</p>}
       {res && (
-        <div className={`mt-4 space-y-2 rounded-lg border p-4 text-sm ${st === "FAILED" ? "border-rose-200 bg-rose-50" : st === "PARTIAL" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+        <div className={`mt-4 space-y-2 rounded-lg border p-4 text-sm ${st === "FAILED" ? "border-rose-200 bg-rose-50" : st === "PARTIAL" ? "border-amber-200 bg-amber-50" : st === "QUEUED" ? "border-slate-200 bg-slate-50" : "border-emerald-200 bg-emerald-50"}`}>
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge tone={STATUS_TONE[st]}>{st}</StatusBadge>
             <StageBar stage={res.stage as string | null} status={st} />
           </div>
           <div>{String(res.message)}</div>
+          {st === "QUEUED" ? (
+            <div className="text-xs text-slate-600">
+              {String(res.received)} registros recebidos e gravados no RAW · job #{String(res.job_id)} na fila.
+              Validação, Silver, Gold e reconciliação rodam no worker — acompanhe o andamento na lista de execuções (atualiza sozinha).
+            </div>
+          ) : (
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
             {[["Recebidos", res.received], ["Válidos", res.valid], ["Rejeitados", res.rejected], ["Erros", res.errors], ["Avisos", res.warnings], ["Reconciliação", res.reconciliation ?? "—"]].map(([k, v]) => (
               <div key={String(k)} className="rounded bg-white/70 px-2 py-1"><div className="text-[11px] text-slate-500">{String(k)}</div><div className="font-semibold">{String(v)}</div></div>
             ))}
           </div>
+          )}
           <div className="text-xs text-slate-500">Ingestão #{String(res.ingestion_run_id)} — veja detalhes (Data Quality, reconciliação, linhagem) na lista abaixo.</div>
         </div>
       )}

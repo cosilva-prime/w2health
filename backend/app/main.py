@@ -9,10 +9,16 @@ administração. Camadas transversais registradas aqui:
 * tratadores de erro — corpo padronizado `{"detail", "code"}`; exceção não tratada vira
   500 genérico com `request_id` (sem stack trace, sem estrutura interna);
 * validação de configuração — em produção/staging a API não sobe sem segredos.
+
+Fase 3: Trusted Hosts, HSTS/CSP na API, IP real só via proxy confiável (uvicorn
+`--proxy-headers --forwarded-allow-ips`), log de acesso estruturado com `duration_ms`,
+métricas (`/metrics`) e health de liveness/readiness (`/health/live`, `/health/ready`).
 """
 
+import hmac
 import logging
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
@@ -20,12 +26,13 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_v1_router
+from app.core import metrics
 from app.core.config import get_settings
-from app.core.logging import configure_logging, set_log_context
+from app.core.logging import clear_log_context, configure_logging, set_log_context
 from app.core.tenant import TenantContextMissing
 from app.saas.audit import RequestMeta, set_request_meta
 from app.security.errors import ApiError
@@ -43,8 +50,12 @@ _SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Cross-Origin-Resource-Policy": "same-site",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    # a API só devolve JSON/arquivos: nada pode ser executado nem emoldurado a partir dela
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
 }
+_HEALTH = ("/health/live", "/health/ready")
+log_http = logging.getLogger("app.http")
 
 
 @asynccontextmanager
@@ -60,11 +71,44 @@ async def lifespan(_app: FastAPI) -> Any:
 
 
 def _client_ip(request: Request) -> str | None:
-    if settings.trust_proxy_headers:
-        xff = request.headers.get("x-forwarded-for")
-        if xff:
-            return xff.split(",")[0].strip()[:64]
-    return request.client.host if request.client else None
+    """IP do cliente. Atrás de proxy, o uvicorn já substituiu `client.host` pelo IP de
+    X-Forwarded-For — e SÓ quando a conexão veio de um IP em FORWARDED_ALLOW_IPS. A
+    aplicação nunca lê o cabeçalho diretamente (evita spoofing de IP no rate limit/auditoria)."""
+    return request.client.host[:64] if request.client else None
+
+
+_TEMPLATES: list[tuple[Any, str]] | None = None
+
+
+def _route_template(request: Request) -> str:
+    """Template da rota (`/api/contratos/{contrato_id}`) — nunca o caminho com ids. Usa o
+    esquema OpenAPI (API pública e estável do FastAPI), compilado uma vez por processo."""
+    global _TEMPLATES
+    if _TEMPLATES is None:
+        from starlette.routing import compile_path
+
+        paths = list(request.app.openapi().get("paths", {})) + list(_HEALTH) + ["/metrics", "/"]
+        # caminhos estáticos antes dos parametrizados (ex.: /x/novo antes de /x/{id})
+        paths.sort(key=lambda p: (p.count("{"), -len(p)))
+        _TEMPLATES = [(compile_path(p)[0], p) for p in paths]
+    for regex, tpl in _TEMPLATES:
+        if regex.match(request.url.path):
+            return tpl
+    return "(sem rota)"
+
+
+def _user_id(request: Request) -> str | None:
+    principal = getattr(request.state, "principal", None)
+    return str(principal.user_id) if principal is not None else None
+
+
+def _host_permitido(request: Request) -> bool:
+    hosts = settings.trusted_hosts
+    if not hosts or "*" in hosts or request.url.path in _HEALTH:
+        return True
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return any(host == h.lower() or (h.startswith("*.") and host.endswith(h[1:].lower()))
+               for h in hosts)
 
 
 def _body(detail: Any, code: str, request: Request, **extra: Any) -> dict:
@@ -93,20 +137,37 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
+        t0 = time.perf_counter()
         rid = request.headers.get("x-request-id") or ""
         rid = rid if _REQ_ID.match(rid) else uuid.uuid4().hex
         request.state.request_id = rid
+        clear_log_context()  # nada de uma requisição anterior no mesmo contexto
         set_log_context(request_id=rid, correlation_id=rid)
         set_request_meta(RequestMeta(ip=_client_ip(request),
                                      user_agent=request.headers.get("user-agent"),
                                      request_id=rid))
-        response = await call_next(request)
+        if not _host_permitido(request):
+            response = JSONResponse({"detail": "Host não permitido.", "code": "invalid_request",
+                                     "request_id": rid}, status_code=400)
+        else:
+            response = await call_next(request)
         response.headers["X-Request-ID"] = rid
         for k, v in _SECURITY_HEADERS.items():
             response.headers.setdefault(k, v)
+        if settings.hsts:
+            response.headers.setdefault("Strict-Transport-Security",
+                                        "max-age=31536000; includeSubDomains")
         if request.url.path.startswith(settings.api_v1_prefix):
             # assets públicos de branding definem o próprio cache
             response.headers.setdefault("Cache-Control", "no-store")
+        dur = time.perf_counter() - t0
+        rota = _route_template(request)
+        if request.url.path not in _HEALTH and request.url.path != "/metrics":
+            metrics.observe_http(request.method, rota, response.status_code, dur)
+            log_http.info("http.request", extra={
+                "event": "http.request", "method": request.method, "route": rota,
+                "status": response.status_code, "duration_ms": int(dur * 1000),
+                "user_id": _user_id(request)})
         return response
 
     app.add_middleware(
@@ -145,6 +206,42 @@ def create_app() -> FastAPI:
         return JSONResponse(_body("Erro interno.", "internal_error", request), status_code=500)
 
     app.include_router(api_v1_router, prefix=settings.api_v1_prefix)
+
+    # ------------------------------------------------------------- health (sem /api)
+    @app.get("/health/live", tags=["Infraestrutura"], summary="Liveness: o processo responde")
+    def live() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/health/ready", tags=["Infraestrutura"],
+             summary="Readiness: banco e armazenamento acessíveis (sem detalhes internos)")
+    def ready() -> JSONResponse:
+        from app.ops.health import readiness_checks
+
+        checks = readiness_checks()
+        ok = all(v != "fail" for v in checks.values())
+        return JSONResponse({"status": "ready" if ok else "not_ready", "checks": checks},
+                            status_code=200 if ok else 503)
+
+    @app.get("/metrics", tags=["Infraestrutura"], include_in_schema=False)
+    def metrics_endpoint(request: Request) -> PlainTextResponse:
+        token = settings.metrics_token.get_secret_value() if settings.metrics_token else ""
+        if not token:
+            if settings.is_production_like:
+                return PlainTextResponse("not found", status_code=404)
+        else:
+            enviado = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            if not hmac.compare_digest(enviado, token):
+                return PlainTextResponse("unauthorized", status_code=401)
+        linhas = metrics.render_http()
+        try:
+            from app.db.session import SessionLocal
+
+            with SessionLocal() as s:
+                linhas += metrics.render_pipeline(s)
+        except Exception:  # noqa: BLE001 — métricas de fila indisponíveis não derrubam a coleta
+            log.warning("metrics: fila indisponível")
+            linhas.append("w2h_metrics_pipeline_up 0")
+        return PlainTextResponse("\n".join(linhas) + "\n", media_type="text/plain; version=0.0.4")
 
     @app.get("/", tags=["Infraestrutura"], summary="Metadados da API")
     def root() -> dict[str, str]:

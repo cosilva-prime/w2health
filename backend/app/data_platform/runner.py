@@ -1,17 +1,27 @@
 """Orquestrador do pipeline de arquivo (fonte FILE) — um tenant por execução.
 
-    validar arquivos → RAW (imutável) → mapping → canônico → Data Quality (gate)
-      → [transação] Silver → Gold → readiness → reconciliação → publicação (commit)
+Fase 3: a carga é ASSÍNCRONA, dividida em duas metades com a fila no meio.
 
-Garantias:
+    [requisição HTTP]  receive_package
+        validar arquivos → RAW (imutável) → ingestão QUEUED + job na MESMA transação
+    [fila]             pipeline_jobs (só ids técnicos)
+    [worker]           process_ingestion
+        reconstruir PipelineContext → validar job × ingestão (RLS) → ler RAW (sha256)
+        → mapping → canônico → Data Quality (gate)
+        → [transação] Silver → Gold → readiness → reconciliação → publicação (commit)
+
+Garantias (mantidas da Fase 2 e reforçadas):
 * tenant explícito (`PipelineContext`) e sessões do papel `w2health_pipeline` amarradas a
-  ele (RLS) — sem fallback para o papel dono;
+  ele (RLS) — sem fallback para o papel dono; o worker reconstrói o contexto do zero a cada
+  job (nada é herdado de um job anterior);
 * nada é promovido antes do gate de Data Quality;
 * Silver + Gold + reconciliação na MESMA transação: carga reprovada não é publicada;
-* metadados (ingestão, DQ, reconciliação, passos) são gravados em transações próprias —
+* metadados (ingestão, DQ, reconciliação, passos) gravados em transações próprias —
   sobrevivem à falha e explicam "por que a carga do tenant X falhou";
 * estágio honesto: RECEIVED → VALIDATED → PROCESSED → RECONCILED → AVAILABLE;
-* reenviar o MESMO pacote (mesmo checksum) não reprocessa nem duplica.
+* idempotência: reenviar o MESMO pacote (checksum) não reprocessa; reexecutar o MESMO job
+  (retry, worker reiniciado) não duplica — ingestão já publicada é no-op, e Silver usa
+  UPSERT/snapshot por competência.
 """
 
 from __future__ import annotations
@@ -22,10 +32,12 @@ import io
 import logging
 import re
 import time
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.logging import log_context
@@ -35,12 +47,13 @@ from app.data_platform.connections import load_connection_mapping
 from app.data_platform.context import PipelineContext, PipelineError, require_active_tenant
 from app.data_platform.mapping import EntityResult, Mapping, apply_entity
 from app.data_platform.silver import SilverLoader, derive_canonical, existing_codes
-from app.data_platform.storage import get_raw_storage, raw_key
+from app.data_platform.storage import RawStorageError, get_raw_storage, raw_key, sha256_hex
 from app.db.pipeline import PipelineSession
 from app.db.tenant_scope import bind_tenant
 from app.models import (
     DataQualityResult,
     IngestionRun,
+    PipelineJob,
     PipelineRun,
     RawObject,
     ReconciliationResult,
@@ -52,6 +65,9 @@ from app.seed.aggregate import rebuild_aggregations
 log = logging.getLogger("app.pipeline")
 
 _FILE = re.compile(r"^([a-z][a-z0-9_]{1,60})\.csv$")
+#: assinaturas de formatos binários comuns — "planilha.csv" que na verdade é zip/pdf/imagem
+_MAGIC = (b"PK\x03\x04", b"%PDF", b"\x89PNG", b"\xff\xd8\xff", b"GIF8", b"MZ", b"\x1f\x8b",
+          b"\xd0\xcf\x11\xe0", b"7z\xbc\xaf", b"Rar!")
 
 
 @dataclass
@@ -69,6 +85,8 @@ class RunSummary:
     duplicate_of: int | None = None
     message: str = ""
     entities: dict = field(default_factory=dict)
+    job_id: int | None = None
+    failure_reason: str | None = None
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -78,15 +96,43 @@ class FileValidationError(PipelineError):
     pass
 
 
+class JobIntegrityError(PipelineError):
+    """O job não corresponde ao que existe no banco do tenant (adulterado ou órfão)."""
+
+
+class RawIntegrityError(PipelineError):
+    """O conteúdo lido do RAW não confere com o sha256 registrado na recepção."""
+
+
 # ======================================================================== validação de arquivos
+@dataclass(frozen=True)
+class FileLimits:
+    max_bytes: int
+    max_files: int
+    max_columns: int = 200
+    max_line_bytes: int = 65536
+    max_rows: int = 5_000_000
+
+    @classmethod
+    def from_settings(cls) -> FileLimits:
+        from app.core.config import get_settings
+
+        s = get_settings()
+        return cls(max_bytes=s.upload_max_file_mb * 1024 * 1024, max_files=s.upload_max_files,
+                   max_columns=s.upload_max_columns, max_line_bytes=s.upload_max_line_bytes,
+                   max_rows=s.upload_max_rows)
+
+
 def validate_files(mapping: Mapping, files: dict[str, bytes], *, max_bytes: int,
-                   max_files: int) -> dict[str, tuple[list[str], list[dict], bytes]]:
-    """Valida nome, extensão, tamanho, encoding e estrutura CSV. Nunca executa conteúdo.
-    Retorna {source_entity: (cabeçalho, linhas, bytes)}."""
+                   max_files: int, limits: FileLimits | None = None) -> dict[str, tuple[list[str], list[dict], bytes]]:
+    """Valida nome, extensão, tamanho, encoding, estrutura e dimensões do CSV. Nunca executa
+    nem interpreta o conteúdo (fórmulas ficam como texto). Retorna
+    {source_entity: (cabeçalho, linhas, bytes)}."""
+    lim = limits or FileLimits(max_bytes=max_bytes, max_files=max_files)
     if not files:
         raise FileValidationError("nenhum arquivo recebido")
-    if len(files) > max_files:
-        raise FileValidationError(f"no máximo {max_files} arquivos por carga")
+    if len(files) > lim.max_files:
+        raise FileValidationError(f"no máximo {lim.max_files} arquivos por carga")
     out = {}
     for nome, data in files.items():
         base = nome.replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
@@ -100,14 +146,18 @@ def validate_files(mapping: Mapping, files: dict[str, bytes], *, max_bytes: int,
             raise FileValidationError(f"arquivo duplicado: {base}")
         if len(data) == 0:
             raise FileValidationError(f"arquivo vazio: {base}")
-        if len(data) > max_bytes:
-            raise FileValidationError(f"arquivo maior que o limite ({max_bytes // (1024 * 1024)} MB): {base}")
-        if b"\x00" in data[:65536]:
-            raise FileValidationError(f"arquivo binário não é aceito: {base}")
+        if len(data) > lim.max_bytes:
+            raise FileValidationError(f"arquivo maior que o limite ({lim.max_bytes // (1024 * 1024)} MB): {base}")
+        if data.startswith(_MAGIC) or b"\x00" in data[:65536]:
+            raise FileValidationError(f"arquivo binário não é aceito (extensão .csv não confere): {base}")
         try:
             texto = data.decode(mapping.encoding).lstrip("﻿")
         except UnicodeDecodeError as e:
             raise FileValidationError(f"encoding inválido em {base} (esperado {mapping.encoding})") from e
+        maior_linha = max((len(x.encode(mapping.encoding, errors="replace"))
+                           for x in texto.splitlines()), default=0)
+        if maior_linha > lim.max_line_bytes:
+            raise FileValidationError(f"linha maior que o limite ({lim.max_line_bytes} bytes) em {base}")
         try:
             leitor = csv.reader(io.StringIO(texto, newline=""), delimiter=mapping.delimiter, strict=True)
             linhas = list(leitor)
@@ -116,8 +166,12 @@ def validate_files(mapping: Mapping, files: dict[str, bytes], *, max_bytes: int,
         if not linhas or not any(c.strip() for c in linhas[0]):
             raise FileValidationError(f"cabeçalho ausente em {base}")
         cab = [c.strip() for c in linhas[0]]
+        if len(cab) > lim.max_columns:
+            raise FileValidationError(f"{base}: {len(cab)} colunas — acima do limite ({lim.max_columns})")
         if len(set(cab)) != len(cab):
             raise FileValidationError(f"colunas repetidas no cabeçalho de {base}")
+        if len(linhas) - 1 > lim.max_rows:
+            raise FileValidationError(f"{base}: acima do limite de {lim.max_rows} linhas")
         registros = []
         for n, lin in enumerate(linhas[1:], start=2):
             if not lin or all(not c.strip() for c in lin):
@@ -141,8 +195,9 @@ def package_checksum(files: dict[str, bytes]) -> str:
 class _Meta:
     """Gravações de metadados em transações próprias (sobrevivem a falhas)."""
 
-    def __init__(self, ctx: PipelineContext) -> None:
+    def __init__(self, ctx: PipelineContext, on_step: Callable[[], None] | None = None) -> None:
         self.ctx = ctx
+        self.on_step = on_step
 
     def session(self) -> Session:
         s = PipelineSession()
@@ -157,18 +212,26 @@ class _Meta:
             s.commit()
 
     def step(self, prun_id: int, stage: str, status: str, t0: float, **info) -> None:
+        ms = int((time.perf_counter() - t0) * 1000)
         with self.session() as s:
             p = s.get(PipelineRun, prun_id)
-            p.steps = [*(p.steps or []), {"stage": stage, "status": status,
-                                          "ms": int((time.perf_counter() - t0) * 1000), **info}]
+            p.steps = [*(p.steps or []), {"stage": stage, "status": status, "ms": ms, **info}]
             p.layer = stage
             s.commit()
-        log.info("pipeline.step", extra={"stage": stage, "status": status, **self.ctx.log_fields()})
+        log.info("pipeline.step", extra={"event": "pipeline.step", "stage": stage, "status": status,
+                                         "duration_ms": ms, **self.ctx.log_fields()})
+        if self.on_step is not None:
+            self.on_step()  # heartbeat do worker (renova o lease do job)
 
 
-# ======================================================================== execução
-def run_file_ingestion(*, tenant_id: str, source_connection_id: int, files: dict[str, bytes],
-                       triggered_by: str, max_bytes: int, max_files: int) -> RunSummary:
+# ======================================================================== 1ª metade: recepção
+def receive_package(*, tenant_id: str, source_connection_id: int, files: dict[str, bytes],
+                    triggered_by: str, max_bytes: int, max_files: int,
+                    limits: FileLimits | None = None, max_attempts: int | None = None) -> RunSummary:
+    """Executa na requisição: valida, grava o RAW e enfileira. Responde rápido — o
+    processamento pesado fica para o worker. Retorna o resumo com `job_id`."""
+    from app.core.config import get_settings
+
     ctx = PipelineContext(tenant_id=tenant_id, source_connection_id=source_connection_id,
                           triggered_by=triggered_by)
     meta = _Meta(ctx)
@@ -196,23 +259,65 @@ def run_file_ingestion(*, tenant_id: str, source_connection_id: int, files: dict
         s.add(prun)
         conn.last_run_at = datetime.now(UTC)
         s.commit()
-        source_system = conn.source_system
     ctx = ctx.with_runs(pipeline_run_id=prun.id, ingestion_run_id=run.id)
     meta.ctx = ctx
     summary = RunSummary(run.id, prun.id, "RUNNING", None)
 
     with log_context(**ctx.log_fields()):
-        log.info("pipeline.start", extra={"files": sorted(files)})
+        log.info("pipeline.received", extra={"event": "pipeline.received", "files": sorted(files)})
+        if anterior is not None:
+            return _finish_duplicate(meta, ctx, summary, anterior.id)
         try:
-            if anterior is not None:
-                return _finish_duplicate(meta, ctx, summary, anterior.id)
-            return _execute(meta, ctx, mapping, files, summary, checksum, source_system,
-                            max_bytes=max_bytes, max_files=max_files)
-        except Exception as e:  # noqa: BLE001 — registra e devolve status honesto
-            seguro = str(e)[:300] if isinstance(e, PipelineError) else "erro interno do pipeline"
-            log.exception("pipeline.erro")
-            _fail(meta, ctx, summary, seguro, stage=summary.stage)
+            t0 = time.perf_counter()
+            parsed = validate_files(mapping, files, max_bytes=max_bytes, max_files=max_files,
+                                    limits=limits or FileLimits(max_bytes=max_bytes, max_files=max_files))
+            meta.step(ctx.pipeline_run_id, "file_validation", "OK", t0, arquivos=len(parsed))
+        except FileValidationError as e:
+            _fail(meta, ctx, summary, str(e)[:300], stage=None)
             return summary
+
+        # RAW (imutável) + ingestão QUEUED + job — o job só existe se o RAW existe
+        t0 = time.perf_counter()
+        storage = get_raw_storage()
+        refs = []
+        try:
+            for entidade, (_cab, linhas, data) in parsed.items():
+                ref = storage.put(raw_key(ctx.tenant_id, ctx.source_connection_id, entidade,
+                                          ctx.ingestion_run_id, f"{entidade}.csv"), data,
+                                  content_type="text/csv")
+                refs.append((entidade, ref, len(linhas)))
+        except RawStorageError as e:
+            _fail(meta, ctx, summary, "armazenamento RAW indisponível — reenvie o pacote", stage=None)
+            raise e
+        recebidos = sum(n for _e, _r, n in refs)
+        with meta.session() as s:
+            for entidade, ref, n in refs:
+                s.add(RawObject(tenant_id=ctx.tenant_id, source_connection_id=ctx.source_connection_id,
+                                ingestion_run_id=ctx.ingestion_run_id, source_entity=entidade,
+                                storage_key=ref.key, file_name=f"{entidade}.csv", size_bytes=ref.size,
+                                sha256=ref.sha256, records=n))
+            r = s.get(IngestionRun, ctx.ingestion_run_id)
+            r.status, r.stage, r.records_received = "QUEUED", "RECEIVED", recebidos
+            p = s.get(PipelineRun, ctx.pipeline_run_id)
+            p.status = "QUEUED"
+            job = PipelineJob(job_type="file_ingestion", tenant_id=ctx.tenant_id,
+                              source_connection_id=ctx.source_connection_id,
+                              ingestion_run_id=ctx.ingestion_run_id, pipeline_run_id=ctx.pipeline_run_id,
+                              dedup_key=f"file_ingestion:{ctx.tenant_id}:{ctx.ingestion_run_id}",
+                              status="QUEUED", max_attempts=max_attempts or get_settings().job_max_attempts,
+                              correlation_id=ctx.correlation_id, created_by=triggered_by[:254])
+            s.add(job)
+            s.commit()  # outbox: RAW registrado, ingestão QUEUED e job — juntos ou nada
+            onboarding.advance(s, ctx.tenant_id, "RAW_LOADED", by=ctx.triggered_by)
+            s.commit()
+            job_id = job.id
+        meta.step(ctx.pipeline_run_id, "raw", "OK", t0, registros=recebidos)
+        _audit(meta, ctx.with_runs(job_id=job_id), "pipeline.ingestion_queued", "success",
+               {"job_id": job_id, "recebidas": recebidos, "arquivos": len(refs)})
+        summary.status, summary.stage, summary.received, summary.job_id = "QUEUED", "RECEIVED", recebidos, job_id
+        summary.message = "pacote recebido e enfileirado — o processamento continua no worker"
+        log.info("pipeline.queued", extra={"event": "pipeline.queued", "job_id": job_id})
+        return summary
 
 
 def _finish_duplicate(meta: _Meta, ctx: PipelineContext, summary: RunSummary, anterior: int) -> RunSummary:
@@ -226,33 +331,88 @@ def _finish_duplicate(meta: _Meta, ctx: PipelineContext, summary: RunSummary, an
     return summary
 
 
-def _execute(meta, ctx, mapping, files, summary, checksum, source_system, *, max_bytes, max_files):
-    storage = get_raw_storage()
+# ======================================================================== 2ª metade: worker
+@dataclass(frozen=True)
+class JobRef:
+    """O que o worker sabe de um job: só identificadores técnicos."""
 
-    # 1. arquivos ------------------------------------------------------------------
-    t0 = time.perf_counter()
-    parsed = validate_files(mapping, files, max_bytes=max_bytes, max_files=max_files)
-    meta.step(ctx.pipeline_run_id, "file_validation", "OK", t0, arquivos=len(parsed))
+    job_id: int
+    tenant_id: str
+    source_connection_id: int
+    ingestion_run_id: int
+    pipeline_run_id: int
+    attempt: int
+    created_by: str | None = None
+    correlation_id: str | None = None
 
-    # 2. RAW (imutável) --------------------------------------------------------------
-    t0 = time.perf_counter()
-    with meta.session() as s:
-        for entidade, (_cab, linhas, data) in parsed.items():
-            ref = storage.put(raw_key(ctx.tenant_id, ctx.source_connection_id, entidade,
-                                      ctx.ingestion_run_id, f"{entidade}.csv"), data)
-            s.add(RawObject(tenant_id=ctx.tenant_id, source_connection_id=ctx.source_connection_id,
-                            ingestion_run_id=ctx.ingestion_run_id, source_entity=entidade,
-                            storage_key=ref.key, file_name=f"{entidade}.csv", size_bytes=ref.size,
-                            sha256=ref.sha256, records=len(linhas)))
-        run = s.get(IngestionRun, ctx.ingestion_run_id)
-        run.stage = "RECEIVED"
-        run.records_received = sum(len(v[1]) for v in parsed.values())
-        s.commit()
-        onboarding.advance(s, ctx.tenant_id, "RAW_LOADED", by=ctx.triggered_by)
-        s.commit()
-    summary.stage, summary.received = "RECEIVED", sum(len(v[1]) for v in parsed.values())
-    meta.step(ctx.pipeline_run_id, "raw", "OK", t0, registros=summary.received)
 
+def job_context(job: JobRef) -> PipelineContext:
+    """Contexto NOVO a cada job — nada herdado do job anterior do mesmo processo."""
+    return PipelineContext(tenant_id=job.tenant_id, source_connection_id=job.source_connection_id,
+                           triggered_by=job.created_by or "worker",
+                           correlation_id=job.correlation_id or uuid.uuid4().hex,
+                           ).with_runs(pipeline_run_id=job.pipeline_run_id,
+                                       ingestion_run_id=job.ingestion_run_id, job_id=job.job_id)
+
+
+def process_ingestion(job: JobRef, *, on_step: Callable[[], None] | None = None,
+                      limits: FileLimits | None = None) -> RunSummary:
+    """Processa um job. Erros de infraestrutura SOBEM (o worker decide retry); desfechos de
+    negócio (DQ bloqueou, reconciliação reprovou) viram status FAILED no resumo."""
+    ctx = job_context(job)
+    meta = _Meta(ctx, on_step=on_step)
+    lim = limits or FileLimits.from_settings()
+    summary = RunSummary(job.ingestion_run_id, job.pipeline_run_id, "RUNNING", "RECEIVED", job_id=job.job_id)
+    with log_context(**ctx.log_fields()):
+        with meta.session() as s:
+            require_active_tenant(s, ctx.tenant_id)
+            run = s.get(IngestionRun, job.ingestion_run_id)  # sob RLS do tenant do job
+            prun = s.get(PipelineRun, job.pipeline_run_id)
+            if (run is None or prun is None or run.source_connection_id != job.source_connection_id
+                    or prun.ingestion_run_id != run.id):
+                raise JobIntegrityError("job não corresponde a uma ingestão deste tenant")
+            if run.status in ("SUCCESS", "PARTIAL") and run.stage == "AVAILABLE":
+                summary.status, summary.stage = run.status, run.stage
+                summary.message = "ingestão já publicada — nada a refazer (idempotência)"
+                return summary
+            if run.status in ("FAILED", "CANCELLED"):
+                summary.status, summary.message = run.status, "ingestão encerrada — nada a processar"
+                return summary
+            conn = s.get(SourceConnection, job.source_connection_id)
+            if conn is None:
+                raise JobIntegrityError("fonte do job inexistente neste tenant")
+            mapping = load_connection_mapping(conn.configuration or {})
+            source_system = conn.source_system
+            raws = s.execute(select(RawObject).where(RawObject.ingestion_run_id == run.id)
+                             .order_by(RawObject.id)).scalars().all()
+            if not raws:
+                raise JobIntegrityError("ingestão sem objetos RAW")
+            run.status, prun.status = "RUNNING", "RUNNING"
+            prun.steps = [*(prun.steps or []), {"stage": "attempt", "status": "STARTED", "ms": 0,
+                                                "tentativa": job.attempt}]
+            # nova tentativa começa limpa: resultados de uma tentativa interrompida saem
+            s.execute(delete(DataQualityResult).where(DataQualityResult.ingestion_run_id == run.id))
+            s.execute(delete(ReconciliationResult).where(ReconciliationResult.ingestion_run_id == run.id))
+            s.commit()
+            objetos = [(r.storage_key, r.file_name, r.sha256) for r in raws]
+        log.info("pipeline.start", extra={"event": "pipeline.start", "attempt": job.attempt})
+
+        storage = get_raw_storage()
+        files: dict[str, bytes] = {}
+        t0 = time.perf_counter()
+        for key, nome, sha in objetos:
+            data = storage.get(key)
+            if sha256_hex(data) != sha:
+                raise RawIntegrityError(f"conteúdo RAW não confere com o registrado ({nome})")
+            files[nome] = data
+        parsed = validate_files(mapping, files, max_bytes=lim.max_bytes, max_files=lim.max_files, limits=lim)
+        summary.received = sum(len(v[1]) for v in parsed.values())
+        meta.step(ctx.pipeline_run_id, "raw_read", "OK", t0, objetos=len(objetos))
+        return _transform_and_publish(meta, ctx, mapping, parsed, summary, source_system)
+
+
+def _transform_and_publish(meta: _Meta, ctx: PipelineContext, mapping: Mapping, parsed: dict,
+                           summary: RunSummary, source_system: str) -> RunSummary:
     # 3. mapping → canônico --------------------------------------------------------
     t0 = time.perf_counter()
     results: dict[str, EntityResult] = {}
@@ -285,6 +445,7 @@ def _execute(meta, ctx, mapping, files, summary, checksum, source_system, *, max
     if report.blocked:
         meta.step(ctx.pipeline_run_id, "data_quality", "BLOCKED", t0, erros=summary.errors)
         bloqueios = [f.description for f in report.findings if f.blocking][:5]
+        summary.failure_reason = "dq_blocked"
         _fail(meta, ctx, summary, "Data Quality bloqueou a promoção", stage="RECEIVED",
               detalhes={"bloqueios": bloqueios})
         return summary
@@ -342,6 +503,7 @@ def _execute(meta, ctx, mapping, files, summary, checksum, source_system, *, max
         meta.step(ctx.pipeline_run_id, "reconciliation", resultado, t2, verificacoes=len(checks))
         if resultado == reconciliation.FAIL:
             data_s.rollback()
+            summary.failure_reason = "reconciliation_failed"
             _fail(meta, ctx, summary, "Reconciliação reprovou a carga — nada foi publicado",
                   stage="PROCESSED",
                   detalhes={"falhas": [c.as_dict() for c in checks if c.status == "FAIL"][:5]})
@@ -371,10 +533,76 @@ def _execute(meta, ctx, mapping, files, summary, checksum, source_system, *, max
     _audit(meta, ctx, "pipeline.ingestion_completed", "success",
            {"status": status, "recebidas": summary.received, "validas": summary.valid,
             "rejeitadas": summary.rejected, "reconciliacao": resultado})
-    log.info("pipeline.fim", extra={"status": status, **ctx.log_fields()})
+    log.info("pipeline.fim", extra={"event": "pipeline.completed", "status": status, **ctx.log_fields()})
     return summary
 
 
+# ======================================================================== desfechos chamados pelo worker
+def fail_ingestion(job: JobRef, msg: str) -> None:
+    """Falha definitiva (ou tentativas esgotadas) de um job — mensagem segura, sem stack."""
+    ctx = job_context(job)
+    meta = _Meta(ctx)
+    summary = RunSummary(job.ingestion_run_id, job.pipeline_run_id, "FAILED", None)
+    with meta.session() as s:
+        run = s.get(IngestionRun, job.ingestion_run_id)
+        if run is None:  # job adulterado: não existe ingestão deste tenant para marcar
+            return
+        stage = run.stage
+    _fail(meta, ctx, summary, msg, stage=stage)
+
+
+def requeue_ingestion(job: JobRef, msg: str, attempt: int, max_attempts: int) -> None:
+    """Erro transitório: a ingestão volta a QUEUED com a nota da tentativa (sem dado de linha)."""
+    ctx = job_context(job)
+    meta = _Meta(ctx)
+    with meta.session() as s:
+        run = s.get(IngestionRun, job.ingestion_run_id)
+        if run is None:
+            return
+        run.status = "QUEUED"
+        run.error_summary = {**(run.error_summary or {}),
+                             "ultima_tentativa": {"tentativa": attempt, "de": max_attempts, "erro": msg[:200]}}
+        prun = s.get(PipelineRun, job.pipeline_run_id)
+        if prun is not None:
+            prun.status = "QUEUED"
+            prun.steps = [*(prun.steps or []), {"stage": "attempt", "status": "RETRY", "ms": 0,
+                                                "tentativa": attempt, "erro": msg[:120]}]
+        s.commit()
+
+
+def cancel_ingestion(job: JobRef, by: str) -> None:
+    ctx = job_context(job)
+    meta = _Meta(ctx)
+    meta.update_run(job.ingestion_run_id, status="CANCELLED", finished_at=datetime.now(UTC),
+                    error_summary={"erro": f"cancelada por {by[:120]}"})
+    _close_pipeline(meta, ctx, "CANCELLED")
+    _audit(meta, ctx, "pipeline.ingestion_cancelled", "success", {"por": by[:120]})
+
+
+# ======================================================================== execução síncrona (CLI)
+def run_file_ingestion(*, tenant_id: str, source_connection_id: int, files: dict[str, bytes],
+                       triggered_by: str, max_bytes: int, max_files: int) -> RunSummary:
+    """Conveniência para a CLI: recebe e processa AGORA, pelo mesmo caminho do worker
+    (mesma fila, mesmo job, mesmas regras de retry) — não existe um segundo pipeline."""
+    recebido = receive_package(tenant_id=tenant_id, source_connection_id=source_connection_id,
+                               files=files, triggered_by=triggered_by, max_bytes=max_bytes,
+                               max_files=max_files)
+    if recebido.job_id is None:
+        return recebido
+    from app.worker.service import Worker
+
+    Worker(worker_id=f"inline:{triggered_by[:60]}").run_job(recebido.job_id)
+    with PipelineSession() as s:
+        bind_tenant(s, tenant_id)
+        run = s.get(IngestionRun, recebido.ingestion_run_id)
+        recebido.status, recebido.stage = run.status, run.stage
+        recebido.valid, recebido.rejected = run.records_valid, run.records_rejected
+        recebido.errors, recebido.warnings = run.errors_count, run.warnings_count
+        recebido.message = (run.error_summary or {}).get("erro", "") or recebido.message
+    return recebido
+
+
+# ======================================================================== persistência auxiliar
 def _persist_dq(meta: _Meta, ctx: PipelineContext, report) -> None:
     with meta.session() as s:
         for f in report.findings:
@@ -420,7 +648,7 @@ def _fail(meta: _Meta, ctx: PipelineContext, summary: RunSummary, msg: str, *,
     _close_pipeline(meta, ctx, "FAILED")
     summary.status, summary.stage, summary.message = "FAILED", stage, msg
     _audit(meta, ctx, "pipeline.ingestion_failed", "failure", {"motivo": msg})
-    log.warning("pipeline.falhou", extra={"motivo": msg, **ctx.log_fields()})
+    log.warning("pipeline.falhou", extra={"event": "pipeline.failed", "motivo": msg, **ctx.log_fields()})
 
 
 def _audit(meta: _Meta, ctx: PipelineContext, action: str, outcome: str, details: dict) -> None:
@@ -429,5 +657,6 @@ def _audit(meta: _Meta, ctx: PipelineContext, action: str, outcome: str, details
                   tenant_id=ctx.tenant_id, entity_type="ingestion_run",
                   entity_id=ctx.ingestion_run_id, outcome=outcome,
                   details={**details, "correlation_id": ctx.correlation_id,
-                           "source_connection_id": ctx.source_connection_id})
+                           "source_connection_id": ctx.source_connection_id,
+                           **({"job_id": ctx.job_id} if ctx.job_id else {})})
         s.commit()

@@ -22,7 +22,7 @@ from sqlalchemy.exc import DBAPIError
 from app.data_platform.paths import data_platform_dir
 from app.data_platform.storage import get_raw_storage
 from app.db.tenant_scope import bind_tenant
-from tests.conftest import SUPERADMIN_EMAIL, create_tenant, create_user, iso_client
+from tests.conftest import SUPERADMIN_EMAIL, create_tenant, create_user, iso_client, upload_and_wait
 
 pytestmark = pytest.mark.scenarios
 
@@ -45,10 +45,9 @@ def _pacote(pasta: Path, *, seed: int, benef: int, receitas: bool = True) -> dic
 
 
 def _upload(sa, tenant: str, source_id: int, files: dict[str, bytes]) -> dict:
-    r = sa.post(f"/api/admin/tenants/{tenant}/sources/{source_id}/uploads",
-                files=[("files", (nome, data, "text/csv")) for nome, data in files.items()])
-    assert r.status_code == 200, r.text
-    return r.json()
+    """Fase 3: upload ASSÍNCRONO — 202 + job; o worker real (mesma fila) processa e o
+    resultado é lido da ingestão. Reenvio idêntico/arquivo recusado respondem 200 direto."""
+    return upload_and_wait(sa, tenant, source_id, files)
 
 
 def _soma_csv(files: dict[str, bytes], mes: str) -> tuple[Decimal, Decimal]:

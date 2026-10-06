@@ -41,7 +41,7 @@ build:
 test: test-backend
 
 test-backend:
-	$(COMPOSE) run --rm --no-deps -v ./data_platform:/data_platform:ro backend pytest
+	$(COMPOSE) --profile test run --rm --build backend-test
 
 migrate:
 	$(COMPOSE) exec backend alembic upgrade head

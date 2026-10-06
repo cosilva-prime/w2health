@@ -70,12 +70,16 @@ def test_politica_de_senha():
 def test_producao_exige_segredos():
     s = Settings(environment="production", jwt_secret_key=None, data_encryption_key=None, cookie_secure=False)
     problemas = s.validate_for_runtime()
-    assert len(problemas) == 3
+    # os 3 problemas originais continuam detectados (Fase 3 acrescentou regras — ver
+    # test_phase3_security.py::test_producao_fail_closed_*)
+    assert any("JWT_SECRET_KEY" in p for p in problemas)
+    assert any("DATA_ENCRYPTION_KEY" in p for p in problemas)
+    assert any("COOKIE_SECURE" in p for p in problemas)
 
 
 def test_rotas_de_dados_exigem_autenticacao(client: TestClient):
     """Toda rota fora de /health, /public e /auth (login/refresh/logout) exige token."""
-    abertas = {"/", "/api/health", "/api/auth/login", "/api/auth/refresh", "/api/auth/logout",
+    abertas = {"/", "/api/health", "/health/live", "/health/ready", "/api/auth/login", "/api/auth/refresh", "/api/auth/logout",
                "/api/auth/mfa/verify", "/api/auth/password/required-change",
                "/api/auth/mfa/setup", "/api/auth/mfa/confirm"}
     spec = client.get("/openapi.json").json()["paths"]

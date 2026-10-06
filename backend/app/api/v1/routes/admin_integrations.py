@@ -8,12 +8,12 @@ pipeline (`app/data_platform/runner.py`). Segredos nunca são exibidos.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -21,23 +21,27 @@ from app.data_platform import connections as conn_svc
 from app.data_platform import lineage, onboarding, readiness
 from app.data_platform.context import PipelineError
 from app.data_platform.mapping import MappingError
-from app.data_platform.runner import FileValidationError, run_file_ingestion
+from app.data_platform.runner import FileLimits, FileValidationError, receive_package
+from app.data_platform.storage import StorageUnavailable
 from app.db.pipeline import PipelineDatabaseNotConfigured
 from app.db.session import get_db
 from app.db.tenant_scope import bind_tenant
 from app.models import (
     DataQualityResult,
     IngestionRun,
+    PipelineJob,
     PipelineRun,
     ReconciliationResult,
     SourceConnection,
     Tenant,
+    WorkerHeartbeat,
 )
 from app.saas import audit
 from app.saas.features import resolve_all
 from app.security.deps import Principal, require_platform
 from app.security.errors import ApiError
 from app.security.rbac import Perm
+from app.worker.admin import admin_cancel, admin_requeue
 
 router = APIRouter(prefix="/admin", tags=["Administração Works2Data — Integrações"])
 _INTEG = require_platform(Perm.PLATFORM_TENANTS_MANAGE)
@@ -192,16 +196,39 @@ def validate_source(tenant_id: str, source_id: int, p: Principal = Depends(_INTE
 
 
 # ============================================================================ upload controlado
-@router.post("/tenants/{tenant_id}/sources/{source_id}/uploads",
-             summary="Importação controlada (fonte FILE): RAW → mapping → DQ → Silver → Gold → reconciliação")
-async def upload(tenant_id: str, source_id: int, files: list[UploadFile] = File(...),
+#: tipos MIME aceitos para "<entidade>.csv" (navegadores/SOs variam; o conteúdo é
+#: revalidado byte a byte — o MIME é só uma barreira a mais contra arquivo trocado)
+_CSV_MIME = {"text/csv", "application/csv", "text/plain", "application/vnd.ms-excel",
+             "application/octet-stream", "text/x-csv", ""}
+_upload_limiter = None
+
+
+def _limitador_upload():
+    global _upload_limiter
+    if _upload_limiter is None:
+        from app.security.rate_limit import build_limiter
+
+        cfg = get_settings()
+        _upload_limiter = build_limiter(cfg.rate_limit_backend, cfg.upload_rate_limit_per_hour, 3600)
+    return _upload_limiter
+
+
+@router.post("/tenants/{tenant_id}/sources/{source_id}/uploads", status_code=202,
+             summary="Importação controlada (fonte FILE): recebe, grava o RAW e ENFILEIRA — "
+                     "mapping → DQ → Silver → Gold → reconciliação rodam no worker")
+async def upload(tenant_id: str, source_id: int, request: Request, response: Response,
+                 files: list[UploadFile] = File(...),
                  p: Principal = Depends(_INTEG), db: Session = Depends(get_db)) -> dict:
     cfg = get_settings()
     limite = cfg.upload_max_file_mb * 1024 * 1024
+    if not _limitador_upload().hit(f"upload:user:{p.user_id}"):
+        raise ApiError("rate_limited", "Limite de cargas por hora atingido. Tente mais tarde.")
     if len(files) > cfg.upload_max_files:
         raise ApiError("invalid_request", f"no máximo {cfg.upload_max_files} arquivos por carga")
     recebidos: dict[str, bytes] = {}
     for f in files:
+        if (f.content_type or "").split(";")[0].strip().lower() not in _CSV_MIME:
+            raise ApiError("invalid_request", "tipo de arquivo não aceito (envie CSV)")
         data = await f.read(limite + 1)
         if len(data) > limite:
             raise ApiError("invalid_request", f"arquivo maior que {cfg.upload_max_file_mb} MB")
@@ -209,14 +236,104 @@ async def upload(tenant_id: str, source_id: int, files: list[UploadFile] = File(
     if db.get(Tenant, tenant_id) is None:
         raise ApiError("not_found", "Tenant não encontrado.")
     try:
-        r = await run_in_threadpool(run_file_ingestion, tenant_id=tenant_id, source_connection_id=source_id,
+        r = await run_in_threadpool(receive_package, tenant_id=tenant_id, source_connection_id=source_id,
                                     files=recebidos, triggered_by=p.email, max_bytes=limite,
-                                    max_files=cfg.upload_max_files)
+                                    max_files=cfg.upload_max_files, limits=FileLimits.from_settings())
     except PipelineDatabaseNotConfigured as e:
         raise ApiError("service_unavailable", "Execução de pipeline não configurada neste ambiente.") from e
+    except StorageUnavailable as e:
+        raise ApiError("service_unavailable", "Armazenamento indisponível — tente novamente.") from e
     except (PipelineError, MappingError, FileValidationError) as e:
         raise ApiError("invalid_request", str(e)[:300]) from e
+    # 202 = aceito e enfileirado; 200 = desfecho imediato (reenvio idêntico ou arquivo recusado)
+    if r.status != "QUEUED":
+        response.status_code = 200
     return r.as_dict()
+
+
+# ============================================================================ jobs (operação)
+def _job_dict(j: PipelineJob, agora: datetime) -> dict:
+    dur = None
+    if j.started_at:
+        dur = int(((j.finished_at or agora) - j.started_at).total_seconds() * 1000)
+    travado = j.status == "RUNNING" and j.lease_expires_at is not None and j.lease_expires_at < agora
+    return {
+        "id": j.id, "tenant_id": j.tenant_id, "source_connection_id": j.source_connection_id,
+        "ingestion_run_id": j.ingestion_run_id, "pipeline_run_id": j.pipeline_run_id,
+        "status": j.status, "attempts": j.attempts, "max_attempts": j.max_attempts,
+        "created_at": _iso(j.created_at), "started_at": _iso(j.started_at), "finished_at": _iso(j.finished_at),
+        "next_attempt_at": _iso(j.next_attempt_at), "heartbeat_at": _iso(j.heartbeat_at),
+        "duration_ms": dur, "last_error": j.last_error, "error_class": j.error_class,
+        "stuck": travado, "created_by": j.created_by,
+        # retry só faz sentido para falha de infraestrutura (DQ/mapping exigem novo envio)
+        "can_retry": (j.status == "FAILED" and j.error_class == "retryable") or travado,
+        "can_cancel": j.status == "QUEUED",
+    }
+
+
+@router.get("/jobs", summary="Fila do pipeline — status, tentativas, travados")
+def list_jobs(status: str | None = Query(None), tenant_id: str | None = Query(None),
+              stuck: bool = Query(False), limit: int = Query(50, ge=1, le=200),
+              _p: Principal = Depends(_INTEG), db: Session = Depends(get_db)) -> dict:
+    agora = db.execute(select(func.now())).scalar_one()
+    stmt = select(PipelineJob).order_by(desc(PipelineJob.id)).limit(limit)
+    if status:
+        stmt = stmt.where(PipelineJob.status == status)
+    if tenant_id:
+        stmt = stmt.where(PipelineJob.tenant_id == tenant_id)
+    if stuck:
+        stmt = stmt.where(PipelineJob.status == "RUNNING", PipelineJob.lease_expires_at < agora)
+    itens = [_job_dict(j, agora) for j in db.execute(stmt).scalars()]
+    resumo = {st: n for st, n in db.execute(select(PipelineJob.status, func.count())
+                                            .group_by(PipelineJob.status)).all()}
+    mais_antigo = db.execute(select(func.min(PipelineJob.created_at))
+                             .where(PipelineJob.status == "QUEUED")).scalar()
+    vivos = db.execute(select(func.count()).select_from(WorkerHeartbeat).where(
+        WorkerHeartbeat.last_seen_at > agora - timedelta(seconds=120))).scalar_one()
+    return {"itens": itens, "resumo": resumo, "workers_ativos": vivos,
+            "fila_mais_antiga_segundos": int((agora - mais_antigo).total_seconds()) if mais_antigo else None,
+            "travados": sum(1 for i in itens if i["stuck"])}
+
+
+def _job_ou_404(db: Session, job_id: int) -> PipelineJob:
+    j = db.get(PipelineJob, job_id)
+    if j is None:
+        raise ApiError("not_found", "Job não encontrado.")
+    return j
+
+
+@router.post("/jobs/{job_id}/retry", summary="Reenfileira um job (falha de infraestrutura ou travado) — auditado")
+def retry_job(job_id: int, p: Principal = Depends(_INTEG), db: Session = Depends(get_db)) -> dict:
+    agora = db.execute(select(func.now())).scalar_one()
+    j = _job_ou_404(db, job_id)
+    info = _job_dict(j, agora)
+    if not info["can_retry"]:
+        raise ApiError("conflict", "Este job não pode ser reexecutado: falhas de Data Quality, mapping ou "
+                                   "validação exigem corrigir a origem e reenviar o pacote.")
+    ok = admin_requeue(job_id, by=p.email)
+    if not ok:
+        raise ApiError("conflict", "O job mudou de estado — atualize a lista.")
+    audit.add(db, "pipeline.job_retry", actor=p.actor(), tenant_id=j.tenant_id, entity_type="pipeline_job",
+              entity_id=job_id, details={"status_anterior": info["status"], "tentativas": info["attempts"],
+                                         "travado": info["stuck"]})
+    db.commit()
+    db.expire_all()
+    return _job_dict(_job_ou_404(db, job_id), agora)
+
+
+@router.post("/jobs/{job_id}/cancel", summary="Cancela um job ainda na fila — auditado")
+def cancel_job(job_id: int, p: Principal = Depends(_INTEG), db: Session = Depends(get_db)) -> dict:
+    agora = db.execute(select(func.now())).scalar_one()
+    j = _job_ou_404(db, job_id)
+    if j.status != "QUEUED":
+        raise ApiError("conflict", "Só é possível cancelar jobs ainda na fila.")
+    if not admin_cancel(job_id, by=p.email):
+        raise ApiError("conflict", "O job mudou de estado — atualize a lista.")
+    audit.add(db, "pipeline.job_cancel", actor=p.actor(), tenant_id=j.tenant_id, entity_type="pipeline_job",
+              entity_id=job_id, details={"tentativas": j.attempts})
+    db.commit()
+    db.expire_all()
+    return _job_dict(_job_ou_404(db, job_id), agora)
 
 
 # ============================================================================ execuções
@@ -228,8 +345,15 @@ def list_runs(tenant_id: str, source_id: int | None = Query(None), limit: int = 
         if source_id:
             stmt = stmt.where(IngestionRun.source_connection_id == source_id)
         itens = []
-        for r in s.execute(stmt).scalars():
-            itens.append({**run_dict(r), "reconciliation": _recon_status(s, r.id)})
+        runs = s.execute(stmt).scalars().all()
+        jobs = {j.ingestion_run_id: j for j in db.execute(select(PipelineJob).where(
+            PipelineJob.tenant_id == tenant_id,
+            PipelineJob.ingestion_run_id.in_([r.id for r in runs]))).scalars()} if runs else {}
+        agora = db.execute(select(func.now())).scalar_one()
+        for r in runs:
+            j = jobs.get(r.id)
+            itens.append({**run_dict(r), "reconciliation": _recon_status(s, r.id),
+                          "job": _job_dict(j, agora) if j else None})
         return {"itens": itens}
 
 
@@ -259,6 +383,9 @@ def get_run(tenant_id: str, run_id: int, _p: Principal = Depends(_INTEG), db: Se
                                 "difference": str(c.difference), "tolerance": str(c.tolerance),
                                 "status": c.status} for c in rec],
             "reconciliation_status": _recon_status(s, r.id),
+            "job": (lambda j: _job_dict(j, db.execute(select(func.now())).scalar_one()) if j else None)(
+                db.execute(select(PipelineJob).where(PipelineJob.tenant_id == tenant_id,
+                                                     PipelineJob.ingestion_run_id == r.id)).scalars().first()),
         }
 
 

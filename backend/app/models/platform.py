@@ -143,8 +143,10 @@ class IngestionRun(TenantMixin, Base):
 
     __tablename__ = "ingestion_runs"
     __table_args__ = (
-        CheckConstraint("status IN ('PENDING', 'RUNNING', 'SUCCESS', 'PARTIAL', 'FAILED')",
-                        name="status_valido"),
+        # Fase 3: QUEUED (aguardando worker) e CANCELLED (cancelamento administrativo).
+        # PENDING permanece só por compatibilidade com linhas antigas.
+        CheckConstraint("status IN ('PENDING', 'QUEUED', 'RUNNING', 'SUCCESS', 'PARTIAL', 'FAILED', "
+                        "'CANCELLED')", name="status_valido"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

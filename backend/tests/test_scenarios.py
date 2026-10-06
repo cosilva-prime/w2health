@@ -208,7 +208,7 @@ def _contrato_alvo(g: dict) -> int:
 
 
 def test_s14_contract_concentration_detected(db, gabarito):
-    from app.analytics import contratos, decomposition
+    from app.analytics import decomposition
 
     g = gabarito["s14_contrato_concentracao"]
     comp, cid = _competencia_alvo(g), int(g["chave_alvo"])

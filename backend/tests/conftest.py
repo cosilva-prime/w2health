@@ -48,9 +48,11 @@ def client() -> TestClient:
 @pytest.fixture(autouse=True)
 def _reset_rate_limit():
     """O limitador por IP é global ao processo; cada teste começa zerado."""
+    from app.api.v1.routes import admin_integrations
     from app.api.v1.routes.auth import auth_limiter
 
     auth_limiter.reset()
+    admin_integrations._upload_limiter = None  # Fase 3: limite de uploads por usuário/hora
     yield
 
 
@@ -325,3 +327,33 @@ def gabarito(db) -> dict:
     from app.repositories import analytics_repo as repo
 
     return {g["codigo"]: g for g in repo.gabarito(db)}
+
+
+# --------------------------------------------------------------------------------------
+# Fase 3 — fila/worker nos testes: o MESMO worker de produção, drenado no processo de teste.
+# --------------------------------------------------------------------------------------
+def drain_queue(max_jobs: int = 100) -> int:
+    from app.worker.service import Worker
+
+    return Worker(worker_id="pytest-worker").drain(max_jobs)
+
+
+def upload_and_wait(sa, tenant: str, source_id: int, files: dict[str, bytes]) -> dict:
+    """POST do upload (202 = enfileirado) → worker processa → resumo no formato da Fase 2."""
+    r = sa.post(f"/api/admin/tenants/{tenant}/sources/{source_id}/uploads",
+                files=[("files", (nome, data, "text/csv")) for nome, data in files.items()])
+    assert r.status_code in (200, 202), r.text
+    out = r.json()
+    if r.status_code == 200:
+        return out
+    assert out["status"] == "QUEUED" and out["job_id"], out
+    drain_queue()
+    d = sa.get(f"/api/admin/tenants/{tenant}/ingestion-runs/{out['ingestion_run_id']}").json()
+    run = d["run"]
+    erro = (run.get("error_summary") or {}).get("erro")
+    return {**out, "status": run["status"], "stage": run["stage"], "received": run["records_received"],
+            "valid": run["records_valid"], "rejected": run["records_rejected"], "errors": run["errors"],
+            "warnings": run["warnings"], "duplicate_of": run["duplicate_of"],
+            "reconciliation": d["reconciliation_status"], "message": erro or "carga publicada",
+            "job": d.get("job")}
+

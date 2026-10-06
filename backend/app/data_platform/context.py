@@ -34,6 +34,7 @@ class PipelineContext:
     correlation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     pipeline_run_id: int | None = None
     ingestion_run_id: int | None = None
+    job_id: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.tenant_id, str) or not _CODE.match(self.tenant_id or ""):
@@ -42,20 +43,21 @@ class PipelineContext:
             raise PipelineError("pipeline sem responsável (triggered_by)")
 
     def with_runs(self, *, pipeline_run_id: int | None = None,
-                  ingestion_run_id: int | None = None) -> PipelineContext:
+                  ingestion_run_id: int | None = None, job_id: int | None = None) -> PipelineContext:
         return PipelineContext(
             tenant_id=self.tenant_id, source_connection_id=self.source_connection_id,
             triggered_by=self.triggered_by, started_at=self.started_at,
             correlation_id=self.correlation_id,
             pipeline_run_id=pipeline_run_id or self.pipeline_run_id,
             ingestion_run_id=ingestion_run_id or self.ingestion_run_id,
+            job_id=job_id or self.job_id,
         )
 
     def log_fields(self) -> dict:
         return {
             "tenant_id": self.tenant_id, "source_connection_id": self.source_connection_id,
             "pipeline_run_id": self.pipeline_run_id, "ingestion_run_id": self.ingestion_run_id,
-            "correlation_id": self.correlation_id,
+            "correlation_id": self.correlation_id, "job_id": self.job_id,
         }
 
 

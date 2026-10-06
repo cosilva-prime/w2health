@@ -27,6 +27,7 @@ from app.models.catalog import (
 )
 from app.models.config import RegraAlerta
 from app.models.events import EventoAssistencial
+from app.models.jobs import PipelineJob, WorkerHeartbeat
 from app.models.membership import Beneficiario, Competencia, Receita
 from app.models.platform import (
     CapabilityReadiness,
@@ -60,6 +61,8 @@ from app.models.saas import (
 )
 
 __all__ = [
+    "PipelineJob",
+    "WorkerHeartbeat",
     "RegraAlerta",
     "Regiao",
     "Plano",

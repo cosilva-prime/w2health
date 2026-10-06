@@ -49,6 +49,9 @@ PIPELINE_WRITABLE = frozenset({
 })
 #: control plane somente-inserção para o runtime (trilha imutável)
 APPEND_ONLY = frozenset({"audit_logs"})
+#: control plane com privilégio reduzido para o runtime (Fase 3): a API só LÊ a fila
+#: (retry/cancel administrativos também passam pelo papel de pipeline, com transição condicional).
+APP_CONTROL_PRIVS = {"pipeline_jobs": "SELECT", "worker_heartbeats": "SELECT"}
 
 
 def data_plane_tables() -> list[str]:
@@ -81,7 +84,8 @@ def grant_statements(role: str, *, data_tables: list[str], control_tables: list[
             privs = "SELECT"
         out.append(f"GRANT {privs} ON {t} TO {role}")
     for t in control_tables:
-        privs = "SELECT, INSERT" if t in APPEND_ONLY else "SELECT, INSERT, UPDATE, DELETE"
+        privs = ("SELECT, INSERT" if t in APPEND_ONLY else
+                 APP_CONTROL_PRIVS.get(t, "SELECT, INSERT, UPDATE, DELETE"))
         out.append(f"GRANT {privs} ON {t} TO {role}")
     out.append(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role}")
     return out
@@ -98,6 +102,9 @@ def pipeline_grant_statements(role: str) -> list[str]:
             f"GRANT SELECT, INSERT, UPDATE ON tenant_onboarding TO {role}",
             f"GRANT INSERT ON audit_logs TO {role}",
             f"GRANT SELECT (id, occurred_at) ON audit_logs TO {role}",
+            # Fase 3 — fila e presença do worker (control plane, só ids técnicos)
+            f"GRANT SELECT, INSERT, UPDATE ON pipeline_jobs TO {role}",
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON worker_heartbeats TO {role}",
             f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role}"]
     return out
 

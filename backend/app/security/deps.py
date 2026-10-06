@@ -125,6 +125,7 @@ def get_principal(request: Request, db: Session = Depends(get_db)) -> Principal:
         session_id=sess.id, tenant_id=sess.tenant_id,
     )
     request.state.principal = principal
+    set_log_context(user_id=str(user.id))
     return principal
 
 

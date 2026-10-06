@@ -15,13 +15,11 @@ Provam:
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 
-import app.models as models
 from app.core.tenant import DEFAULT_TENANT
 from app.db.base import Base
 
@@ -111,7 +109,7 @@ def test_source_agnostic_mapping_para_canonico_e_agregacao():
         {"codigo_benef": "X1", "data_atend": "2026-01-05", "valor_conta": 1000.0, "valor_glosa": 100.0},
         {"codigo_benef": "X1", "data_atend": "2026-01-20", "valor_conta": 500.0, "valor_glosa": 0.0},
     ]
-    canonico = [_aplicar_mapping(l, _MAPPING_EXEMPLO) for l in origem]
+    canonico = [_aplicar_mapping(linha, _MAPPING_EXEMPLO) for linha in origem]
     assert set(canonico[0]) == {"id_beneficiario", "data_evento", "valor_apresentado", "valor_glosado"}
 
     bruta = sum(r["valor_apresentado"] for r in canonico)

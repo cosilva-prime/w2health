@@ -40,7 +40,9 @@ def test_lista_de_tabelas_da_migration_bate_com_metadata():
     assert _tuple_from_migration("c7a1e2b3d4f5_v1_saas_control_plane.py", "DATA_PLANE_TABLES") == fase1
     controle_fase1 = _tuple_from_migration("e8b9c0d1f2a3_v1_saas_rls_e_papel_de_runtime.py",
                                            "CONTROL_PLANE_TABLES")
-    novas_controle = {"tenant_onboarding", "user_recovery_codes", "auth_rate_limits"}
+    novas_controle = {"tenant_onboarding", "user_recovery_codes", "auth_rate_limits",
+                      # Fase 3 — fila e presença do worker (migration b8e9f0a1c2d3)
+                      "pipeline_jobs", "worker_heartbeats"}
     assert controle_fase1 | novas_controle == set(rls.control_plane_tables())
 
 

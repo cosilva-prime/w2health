@@ -193,7 +193,7 @@ def _build_contratos() -> list[tuple[str, str, str, int]]:
         ),
     }
     out: list[tuple[str, str, str, int]] = []
-    for cod, _nome, seg, _tk, _cp, _cpp in PLANOS:
+    for cod, _nome, _seg, _tk, _cp, _cpp in PLANOS:
         fam = "EMP" if cod.endswith("-EMP") else "PME" if cod.endswith("-PME") else "PF"
         tipo, perfis = familias[fam]
         for base, setor, vidas in perfis:

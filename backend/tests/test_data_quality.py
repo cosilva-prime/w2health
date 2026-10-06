@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from datetime import date
 from pathlib import Path
-
-import pytest
 
 _RULES_PATH = Path(__file__).resolve().parents[2] / "data_platform" / "quality" / "rules.py"
 _spec = importlib.util.spec_from_file_location("dp_quality_rules", _RULES_PATH)

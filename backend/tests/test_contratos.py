@@ -83,4 +83,4 @@ def test_concentracao_da_variacao_escopo_contrato_reconcilia(db):
     cv = decomposition.concentracao_variacao_beneficiarios(db, COMP, "mes_anterior", cid)
     if cv and cv["top"]:
         # participações do top somam <= 100% (com a proteção contra cancelamento)
-        assert all(-1e6 < t["participacao_pct"] for t in cv["top"])
+        assert all(t["participacao_pct"] > -1e6 for t in cv["top"])

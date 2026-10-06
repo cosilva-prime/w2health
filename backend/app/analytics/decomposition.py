@@ -205,8 +205,8 @@ def explicar(
             raise ValueError("contrato sem dados na competência ou na comparação")
         dim_atu = repo.dimensao_mes_por_contrato(session, competencia, dimensao, contrato_id)
         dim_ant = repo.dimensao_mes_por_contrato(session, comp_ant, dimensao, contrato_id)
-        proc_ant = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, comp_ant, contrato_id)
-        proc_atu = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, competencia, contrato_id)
+        proc_ant = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, comp_ant, contrato_id)  # noqa: E731
+        proc_atu = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, competencia, contrato_id)  # noqa: E731
         dec = None
         receita_ant = None
     else:
@@ -220,8 +220,8 @@ def explicar(
         )
         dim_atu = repo.dimensao_mes(session, competencia, dimensao)
         dim_ant = repo.dimensao_mes(session, comp_ant, dimensao)
-        proc_ant = lambda: repo.procedimentos_mes_detalhe(session, comp_ant)
-        proc_atu = lambda: repo.procedimentos_mes_detalhe(session, competencia)
+        proc_ant = lambda: repo.procedimentos_mes_detalhe(session, comp_ant)  # noqa: E731
+        proc_atu = lambda: repo.procedimentos_mes_detalhe(session, competencia)  # noqa: E731
         receita_ant = _f(s_ant["receita"])
 
     subitens = None
@@ -295,15 +295,15 @@ def drill(
         s_ant = repo.sinistralidade_por_contrato_mes(session, comp_ant, contrato_id)
         dim_atu = repo.dimensao_mes_por_contrato(session, competencia, dimensao, contrato_id)
         dim_ant = repo.dimensao_mes_por_contrato(session, comp_ant, dimensao, contrato_id)
-        proc_ant = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, comp_ant, contrato_id)
-        proc_atu = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, competencia, contrato_id)
+        proc_ant = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, comp_ant, contrato_id)  # noqa: E731
+        proc_atu = lambda: repo.procedimentos_mes_detalhe_por_contrato(session, competencia, contrato_id)  # noqa: E731
         receita_ant = None
     else:
         s_ant = repo.sinistralidade_mes(session, comp_ant)
         dim_atu = repo.dimensao_mes(session, competencia, dimensao)
         dim_ant = repo.dimensao_mes(session, comp_ant, dimensao)
-        proc_ant = lambda: repo.procedimentos_mes_detalhe(session, comp_ant)
-        proc_atu = lambda: repo.procedimentos_mes_detalhe(session, competencia)
+        proc_ant = lambda: repo.procedimentos_mes_detalhe(session, comp_ant)  # noqa: E731
+        proc_atu = lambda: repo.procedimentos_mes_detalhe(session, competencia)  # noqa: E731
         receita_ant = _f(s_ant["receita"]) if s_ant else 0.0
 
     subitens = None
