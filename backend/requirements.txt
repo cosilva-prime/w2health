@@ -2,6 +2,8 @@
 #    uv export --no-emit-project --no-hashes --format requirements-txt -o requirements.txt
 alembic==1.19.1
     # via w2health-backend
+annotated-doc==0.0.5
+    # via fastapi
 annotated-types==0.8.0
     # via pydantic
 anyio==4.14.2
@@ -27,9 +29,9 @@ colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   pytest
     #   uvicorn
-cryptography==46.0.7
+cryptography==50.0.2
     # via w2health-backend
-fastapi==0.115.14
+fastapi==0.142.2
     # via w2health-backend
 greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
     # via sqlalchemy
@@ -54,6 +56,8 @@ markupsafe==3.0.3
     # via mako
 numpy==2.5.2
     # via w2health-backend
+opentelemetry-api==1.45.0
+    # via fastapi
 packaging==26.3
     # via pytest
 pluggy==1.6.0
@@ -79,7 +83,7 @@ pyjwt==2.15.1
     # via w2health-backend
 pyotp==2.10.0
     # via w2health-backend
-pytest==8.4.2
+pytest==9.1.1
 python-dotenv==1.2.3
     # via
     #   pydantic-settings
@@ -99,20 +103,25 @@ sqlalchemy==2.0.52
     # via
     #   alembic
     #   w2health-backend
-starlette==0.46.2
-    # via fastapi
+starlette==1.7.0
+    # via
+    #   fastapi
+    #   w2health-backend
 typing-extensions==4.16.0
     # via
     #   alembic
     #   anyio
     #   fastapi
+    #   opentelemetry-api
     #   psycopg
     #   pydantic
     #   pydantic-core
     #   sqlalchemy
+    #   starlette
     #   typing-inspection
 typing-inspection==0.4.4
     # via
+    #   fastapi
     #   pydantic
     #   pydantic-settings
 tzdata==2026.3 ; sys_platform == 'win32'
