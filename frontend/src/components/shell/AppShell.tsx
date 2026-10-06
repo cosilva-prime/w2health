@@ -84,17 +84,16 @@ function Gate({ children }: { children: ReactNode }) {
       defaultComparacao={(s.me?.settings["analysis.default_comparison"] as string) ?? "mes_anterior"}
     >
       <div className="flex min-h-screen flex-col">
-        {s.me?.tenant?.is_synthetic && <DemoBanner />}
         <div className="flex flex-1">
           <Sidebar />
           <div className="flex min-w-0 flex-1 flex-col">
+            {s.me?.tenant?.is_synthetic && <DemoBanner />}
             <Header />
             <main className="flex-1 p-6">
               <RouteGate>{children}</RouteGate>
             </main>
             <footer className="border-t border-slate-200 px-6 py-3 text-center text-[11px] text-slate-400">
-              {s.me?.branding.product_name ?? "W2Health Intelligence"} — um produto{" "}
-              <span className="font-medium text-slate-500">Works2Data</span>
+              {s.me?.branding.product_name ?? "W2Health Intelligence"}
               {s.me?.tenant?.is_synthetic && " · Ambiente demonstrativo com dados sintéticos · Nenhum dado de pessoa real é utilizado."}
             </footer>
           </div>

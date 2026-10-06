@@ -176,7 +176,14 @@ export default function LoginPage() {
             {branding?.login_message ?? "Decision Intelligence Platform for Healthcare"}
           </p>
         </div>
-        <p className="text-xs text-slate-400">Um produto Works2Data · Acesso restrito a usuários autorizados.</p>
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-xs text-slate-400">Acesso restrito a usuários autorizados.</p>
+          <div className="flex items-center gap-2 text-[10px] text-white/40">
+            <span>Powered by</span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/works2data-logo-dark.png" alt="Works2Data" className="h-auto w-28 opacity-90" />
+          </div>
+        </div>
       </div>
 
       <div className="flex items-center justify-center p-6">

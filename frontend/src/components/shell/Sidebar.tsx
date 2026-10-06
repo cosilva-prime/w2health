@@ -32,7 +32,7 @@ export function Sidebar() {
   const nome = b?.product_name ?? "W2Health Intelligence";
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col bg-tenant-primary text-slate-100">
+    <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col self-start bg-tenant-primary text-slate-100">
       <div className="flex h-16 items-center gap-3 border-b border-white/10 px-5">
         {logo ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -44,7 +44,6 @@ export function Sidebar() {
         )}
         <div className="min-w-0 leading-tight">
           <div className="truncate text-sm font-semibold text-white">{nome}</div>
-          <div className="text-[11px] text-slate-400">por Works2Data</div>
         </div>
       </div>
 
@@ -81,15 +80,23 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-white/10 px-5 py-3 text-[11px] text-slate-400">
-        {me?.tenant ? (
-          <>
-            {me.tenant.name}
-            {me.tenant.plan && <span className="text-slate-500"> · {me.tenant.plan.name}</span>}
-          </>
-        ) : (
-          "Modo plataforma"
-        )}
+      <div className="space-y-3 border-t border-white/10 px-5 py-3">
+        <div className="text-[11px] text-slate-400">
+          {me?.tenant ? (
+            <>
+              {me.tenant.name}
+              {me.tenant.plan && <span className="text-slate-500"> · {me.tenant.plan.name}</span>}
+            </>
+          ) : (
+            "Modo plataforma"
+          )}
+        </div>
+        {/* assinatura da empresa (mesmo padrão do Cockpit): logo pequeno no rodapé do menu */}
+        <div className="flex flex-col items-center gap-1 text-[10px] text-white/40">
+          <span>Powered by</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/works2data-logo-dark.png" alt="Works2Data" className="h-auto w-full max-w-[120px] opacity-90" />
+        </div>
       </div>
     </aside>
   );
