@@ -24,8 +24,8 @@ function Psql([string]$db, [string]$sql) {
 # tabelas do data plane (com tenant_id) + controle
 $porTenant = @("beneficiarios", "contratos", "prestadores", "planos", "eventos_assistenciais", "receitas",
     "agg_sinistralidade_competencia", "source_connections", "ingestion_runs", "raw_objects",
-    "data_quality_results", "reconciliation_results", "capability_readiness", "audit_logs")
-$globais = @("tenants", "users", "user_tenants", "plans", "features", "alembic_version")
+    "data_quality_results", "reconciliation_results", "capability_readiness", "audit_logs", "pipeline_jobs")
+$globais = @("tenants", "users", "user_tenants", "plans", "features", "alembic_version", "worker_heartbeats")
 
 function Contagens([string]$db) {
     $partes = @()

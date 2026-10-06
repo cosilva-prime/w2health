@@ -1,0 +1,178 @@
+# W2Health — REFERÊNCIA de deployment de produção (Docker Compose).
+#
+# NÃO é a decisão de arquitetura final de produção (pode ser Kubernetes, ECS, App Service,
+# VMs...). Serve para: (1) documentar os componentes e as fronteiras de rede/segredo de
+# forma executável; (2) validar localmente o comportamento "como produção" — TLS no proxy,
+# migrations em job separado, papéis de banco distintos, configuração fail-closed,
+# contêineres não-root, object storage S3-compatível, worker separado da API.
+#
+#   Internet → [proxy TLS] → frontend / api → [worker] → PostgreSQL / object storage
+#
+# Uso local (validação):
+#   1. python deploy/gen_prod_secrets.py       # gera deploy/secrets/* (gitignored)
+#   2. docker compose -p w2h-prod -f docker-compose.production.example.yml up -d --build
+#   3. https://app.w2h.localhost:8443  (certificado da CA interna do Caddy — só para teste)
+#
+# Em produção real: banco gerenciado (backup/PITR/cifragem), object storage gerenciado,
+# segredos vindos do gerenciador da nuvem montados como arquivos, domínio e TLS reais.
+name: w2h-prod
+
+x-backend-env: &backend-env
+  ENVIRONMENT: "production"
+  SECRETS_DIR: "/run/secrets"          # um arquivo por campo secreto (ver deploy/secrets.example)
+  CORS_ORIGINS: '["https://app.w2h.localhost:8443"]'
+  TRUSTED_HOSTS: '["api.w2h.localhost"]'
+  COOKIE_SECURE: "true"
+  COOKIE_SAMESITE: "strict"
+  SUPER_ADMIN_REQUIRE_MFA: "true"
+  RATE_LIMIT_BACKEND: "database"
+  LOG_FORMAT: "json"
+  RAW_STORAGE_BACKEND: "s3"
+  S3_ENDPOINT_URL: "http://objectstore:9000"
+  S3_REGION: "us-east-1"
+  S3_BUCKET: "w2health-raw"
+  S3_FORCE_PATH_STYLE: "true"
+  DATA_PLATFORM_DIR: "/data_platform"
+
+x-backend-secrets: &backend-secrets
+  - database_url
+  - database_admin_url
+  - database_pipeline_url
+  - jwt_secret_key
+  - data_encryption_key
+  - s3_access_key_id
+  - s3_secret_access_key
+  - metrics_token
+
+networks:
+  edge:            # só o proxy e os serviços expostos por ele
+    ipam:
+      config: [{subnet: 172.30.10.0/24}]
+  internal:        # banco e object storage: sem porta publicada no host
+    internal: true
+
+services:
+  proxy:
+    image: caddy:2-alpine
+    ports: ["8443:8443"]
+    volumes:
+      - ./deploy/Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    networks:
+      edge: {ipv4_address: 172.30.10.10}
+    depends_on: [api, frontend]
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: w2health
+      POSTGRES_DB: w2health
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U w2health -d w2health"]
+      interval: 5s
+      retries: 12
+
+  objectstore:
+    image: quay.io/minio/minio:latest   # qualquer S3-compatível; em produção, o serviço gerenciado
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/s3_access_key_id
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/s3_secret_access_key
+    secrets: [s3_access_key_id, s3_secret_access_key]
+    volumes: [objdata:/data]
+    networks: [internal]
+
+  storage-init:  # cria o bucket privado (one-shot) com a própria imagem do backend (boto3)
+    build: {context: ., dockerfile: backend/Dockerfile}
+    entrypoint: ["python", "-m", "app.ops.storage_init"]
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: "storage-init"
+    secrets: [s3_access_key_id, s3_secret_access_key]
+    networks: [internal]
+    depends_on: [objectstore]
+    restart: on-failure
+
+  migrate:  # job separado com o papel DONO — a API e o worker não têm DDL
+    build: {context: ., dockerfile: backend/Dockerfile}
+    entrypoint: ["sh", "-c", "export APP_DB_PASSWORD=$$(cat /run/secrets/app_db_password) PIPELINE_DB_PASSWORD=$$(cat /run/secrets/pipeline_db_password) && alembic upgrade head && python -m app.saas.cli sync-catalog"]
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: "migrate"
+    secrets: [database_url, database_admin_url, database_pipeline_url, jwt_secret_key, data_encryption_key,
+              s3_access_key_id, s3_secret_access_key, metrics_token, app_db_password, pipeline_db_password]
+    networks: [internal]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+
+  api:
+    build: {context: ., dockerfile: backend/Dockerfile}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: "api"
+      UVICORN_WORKERS: "2"
+      FORWARDED_ALLOW_IPS: "172.30.10.10"   # somente o proxy pode informar o IP do cliente
+    secrets: *backend-secrets
+    networks: [edge, internal]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      storage-init: {condition: service_completed_successfully}
+
+  worker:
+    build: {context: ., dockerfile: backend/Dockerfile}
+    command: ["python", "-m", "app.worker"]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    environment:
+      <<: *backend-env
+      SERVICE_NAME: "worker"
+    secrets: *backend-secrets
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "healthcheck"]
+      interval: 20s
+      retries: 3
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      storage-init: {condition: service_completed_successfully}
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: "https://api.w2h.localhost:8443/api"
+        ENABLE_HSTS: "true"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    networks: [edge]
+
+secrets:
+  postgres_password: {file: ./deploy/secrets/postgres_password}
+  app_db_password: {file: ./deploy/secrets/app_db_password}
+  pipeline_db_password: {file: ./deploy/secrets/pipeline_db_password}
+  database_url: {file: ./deploy/secrets/database_url}
+  database_admin_url: {file: ./deploy/secrets/database_admin_url}
+  database_pipeline_url: {file: ./deploy/secrets/database_pipeline_url}
+  jwt_secret_key: {file: ./deploy/secrets/jwt_secret_key}
+  data_encryption_key: {file: ./deploy/secrets/data_encryption_key}
+  s3_access_key_id: {file: ./deploy/secrets/s3_access_key_id}
+  s3_secret_access_key: {file: ./deploy/secrets/s3_secret_access_key}
+  metrics_token: {file: ./deploy/secrets/metrics_token}
+
+volumes:
+  pgdata:
+  objdata:
+  caddy_data:

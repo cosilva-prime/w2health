@@ -177,6 +177,12 @@ class Worker:
             )
             lease = self.settings.job_lease_seconds
             self._set_current(job.job_id)
+            # lease renovado em segundo plano durante TODO o job (um passo longo — ex.: Gold
+            # de um cliente grande — não pode ser confundido com worker morto)
+            parar = threading.Event()
+            batida = threading.Thread(target=self._renova_lease, args=(job.job_id, lease, parar),
+                                      name=f"lease-{job.job_id}", daemon=True)
+            batida.start()
             try:
                 summary = runner.process_ingestion(
                     job, on_step=lambda: self.queue.heartbeat(job.job_id, self.worker_id, lease)
@@ -251,7 +257,20 @@ class Worker:
                         },
                     )
             finally:
+                parar.set()
+                batida.join(timeout=5)
                 self._set_current(None)
+
+    def _renova_lease(self, job_id: int, lease: int, parar: threading.Event) -> None:
+        intervalo = max(lease / 3, 1)
+        while not parar.wait(intervalo):
+            try:
+                if not self.queue.heartbeat(job_id, self.worker_id, lease):
+                    log.warning("job.lease_lost",
+                                extra={"event": "job.lease_lost", "job_id": job_id})
+                    return
+            except Exception:  # noqa: BLE001 — banco instável: tenta de novo no próximo ciclo
+                log.warning("job.heartbeat_error", extra={"event": "job.heartbeat_error"})
 
     # ------------------------------------------------------------------ presença / health
     def _set_current(self, job_id: int | None) -> None:

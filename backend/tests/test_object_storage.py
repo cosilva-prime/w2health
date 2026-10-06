@@ -24,9 +24,19 @@ from app.data_platform.storage import (
     validate_key,
 )
 
-MALICIOSAS = ["../tenant/b/raw/x", "tenant/a/../b/raw/x", "/tenant/a/raw/x", "tenant/a//raw/x",
-              "tenant\\a\\raw", "tenant/a/raw/..", "tenant/a/raw/.", "tenant/a/\x00/x", "",
-              "tenant/a/raw/arquivo com espaço.csv", "tenant/a/raw/%2e%2e"]
+MALICIOSAS = [
+    "../tenant/b/raw/x",
+    "tenant/a/../b/raw/x",
+    "/tenant/a/raw/x",
+    "tenant/a//raw/x",
+    "tenant\\a\\raw",
+    "tenant/a/raw/..",
+    "tenant/a/raw/.",
+    "tenant/a/\x00/x",
+    "",
+    "tenant/a/raw/arquivo com espaço.csv",
+    "tenant/a/raw/%2e%2e",
+]
 
 
 def _s3():
@@ -38,10 +48,14 @@ def _s3():
 
     from app.data_platform.storage_s3 import S3CompatibleStorage
 
-    cli = boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1",
-                       aws_access_key_id=os.environ.get("S3_TEST_KEY", "w2htest"),
-                       aws_secret_access_key=os.environ.get("S3_TEST_SECRET", "w2htest-secret-123"),
-                       config=Config(signature_version="s3v4", s3={"addressing_style": "path"}))
+    cli = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name="us-east-1",
+        aws_access_key_id=os.environ.get("S3_TEST_KEY", "w2htest"),
+        aws_secret_access_key=os.environ.get("S3_TEST_SECRET", "w2htest-secret-123"),
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+    )
     bucket = f"w2h-test-{uuid.uuid4().hex[:8]}"
     cli.create_bucket(Bucket=bucket)
     return S3CompatibleStorage(cli, bucket, prefix="ambiente-teste")
@@ -57,7 +71,7 @@ def storage(request, tmp_path):
 # ===================================================================== contrato comum
 def test_put_get_head_checksum_list(storage):
     k = raw_key("tenant-a", 1, "eventos", 10, "eventos.csv")
-    dados = "id;valor\n1;10,5\n".encode()
+    dados = b"id;valor\n1;10,5\n"
     ref = storage.put(k, dados, content_type="text/csv")
     assert ref.sha256 == sha256_hex(dados) and ref.size == len(dados)
     assert storage.get(k) == dados and storage.exists(k)
@@ -83,8 +97,12 @@ def test_objeto_inexistente_e_definitivo(storage):
 
 @pytest.mark.parametrize("chave", MALICIOSAS)
 def test_chave_maliciosa_recusada_em_todas_as_operacoes(storage, chave):
-    for op in (lambda: storage.put(chave, b"x"), lambda: storage.get(chave),
-               lambda: storage.exists(chave), lambda: storage.head(chave)):
+    for op in (
+        lambda: storage.put(chave, b"x"),
+        lambda: storage.get(chave),
+        lambda: storage.exists(chave),
+        lambda: storage.head(chave),
+    ):
         with pytest.raises(RawStorageError):
             op()
 
@@ -126,23 +144,29 @@ class _ClienteFalho:
     def __getattr__(self, _nome):
         def falha(**_kw):
             raise self.exc
+
         return falha
 
 
 def _client_error(code: str, status: int):
     from botocore.exceptions import ClientError
 
-    return ClientError({"Error": {"Code": code, "Message": "x"},
-                        "ResponseMetadata": {"HTTPStatusCode": status}}, "PutObject")
+    return ClientError(
+        {"Error": {"Code": code, "Message": "x"}, "ResponseMetadata": {"HTTPStatusCode": status}},
+        "PutObject",
+    )
 
 
-@pytest.mark.parametrize("exc_factory,esperado", [
-    (lambda: _client_error("NoSuchKey", 404), ObjectNotFound),
-    (lambda: _client_error("PreconditionFailed", 412), ObjectExists),
-    (lambda: _client_error("SlowDown", 503), StorageUnavailable),
-    (lambda: _client_error("InternalError", 500), StorageUnavailable),
-    (lambda: _client_error("AccessDenied", 403), RawStorageError),
-])
+@pytest.mark.parametrize(
+    "exc_factory,esperado",
+    [
+        (lambda: _client_error("NoSuchKey", 404), ObjectNotFound),
+        (lambda: _client_error("PreconditionFailed", 412), ObjectExists),
+        (lambda: _client_error("SlowDown", 503), StorageUnavailable),
+        (lambda: _client_error("InternalError", 500), StorageUnavailable),
+        (lambda: _client_error("AccessDenied", 403), RawStorageError),
+    ],
+)
 def test_s3_traduz_erros_para_o_vocabulario_do_dominio(exc_factory, esperado):
     from app.data_platform.storage_s3 import S3CompatibleStorage
 
@@ -156,7 +180,9 @@ def test_s3_endpoint_fora_do_ar_e_retentavel():
 
     from app.data_platform.storage_s3 import S3CompatibleStorage
 
-    st = S3CompatibleStorage(_ClienteFalho(EndpointConnectionError(endpoint_url="http://x")), "bucket")
+    st = S3CompatibleStorage(
+        _ClienteFalho(EndpointConnectionError(endpoint_url="http://x")), "bucket"
+    )
     with pytest.raises(StorageUnavailable):
         st.get(raw_key("tenant-a", 1, "eventos", 1, "eventos.csv"))
     with pytest.raises(StorageUnavailable):

@@ -21,8 +21,9 @@ Push-Location frontend
 npm audit --omit=dev
 if ($LASTEXITCODE -ne 0) { $falhou = $true }
 Write-Host ""
-Write-Host "== Frontend: npm audit (inclui devDependencies — só build/lint) =="
-npm audit --audit-level=high | Select-Object -Last 8
+Write-Host "== Frontend: npm audit (inclui devDependencies — só build/lint; INFORMATIVO) =="
+Write-Host "   Achados aqui não vão para o runtime; decisão registrada em docs/DEPENDENCY_SECURITY.md"
+npm audit | Select-Object -Last 8
 Pop-Location
 
 if ($falhou) {

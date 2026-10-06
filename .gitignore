@@ -30,3 +30,6 @@ Thumbs.db
 # RAW storage local (DEV) — nunca versionar dados recebidos
 var/
 backend/var/
+
+# Segredos do deployment de referência (nunca versionar)
+deploy/secrets/

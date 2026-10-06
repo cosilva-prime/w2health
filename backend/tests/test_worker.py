@@ -620,3 +620,33 @@ def test_storage_indisponivel_no_upload_responde_503_sem_job(wk, tmp_path):
             text("SELECT count(*) FROM pipeline_jobs WHERE ingestion_run_id = :i"), {"i": ultimo.id}
         ).scalar_one()
     assert ultimo.status == "FAILED" and jobs == 0
+
+
+def test_lease_e_renovado_durante_passo_longo(wk, monkeypatch, tmp_path):
+    """Um passo mais longo que o lease não pode parecer worker morto."""
+    import time as _t
+
+    _limpa_fila(wk)
+    r = _enqueue(wk, WA, _pacote(tmp_path, seed=999))
+    w = Worker(worker_id="pytest-lease")
+    monkeypatch.setattr(w.settings, "job_lease_seconds", 2)
+    original = runner.rebuild_aggregations
+    vistos = []
+
+    def gold_lento(*a, **k):
+        for _ in range(3):  # ~4,5 s > lease de 2 s
+            _t.sleep(1.5)
+            with wk["iso"].owner() as s:
+                vistos.append(
+                    s.execute(
+                        text("SELECT lease_expires_at > now() FROM pipeline_jobs WHERE id = :i"),
+                        {"i": r["job_id"]},
+                    ).scalar_one()
+                )
+        return original(*a, **k)
+
+    monkeypatch.setattr(runner, "rebuild_aggregations", gold_lento)
+    w.drain()
+    assert vistos and all(vistos), vistos  # o lease nunca venceu durante o passo
+    j = _job(wk, r["job_id"])
+    assert j["status"] == "SUCCESS" and j["attempts"] == 1

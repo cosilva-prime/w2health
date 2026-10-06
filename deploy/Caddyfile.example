@@ -1,0 +1,36 @@
+# Proxy reverso com TLS — REFERÊNCIA (docker-compose.production.example.yml).
+# `tls internal` = CA local do Caddy, só para validação. Em produção: domínio real com
+# certificado público (ACME automático do Caddy ou do balanceador da nuvem).
+{
+	admin off
+	servers {
+		# só este proxy define X-Forwarded-*; cabeçalhos vindos da internet são sobrescritos
+		trusted_proxies static private_ranges
+	}
+}
+
+app.w2h.localhost:8443 {
+	tls internal
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	reverse_proxy frontend:3000
+}
+
+api.w2h.localhost:8443 {
+	tls internal
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	# /metrics nunca é exposto à internet (coleta pela rede interna)
+	@metrics path /metrics
+	respond @metrics 404
+	request_body {
+		max_size 1100MB
+	}
+	reverse_proxy api:8000
+}
