@@ -26,15 +26,29 @@ PY="$(command -v python3.12 || command -v python3 || true)"
 cd "$APP_BASE_DIR/backend"
 [ -f .env ] || { echo "backend/.env ausente (ver docs/DEPLOY_VPS.md)" >&2; exit 1; }
 [ -f .env.migrate ] || { echo "backend/.env.migrate ausente (ver docs/DEPLOY_VPS.md)" >&2; exit 1; }
-chmod 600 .env .env.migrate
+for f in .env .env.migrate; do
+  if [ ! -O "$f" ] || [ ! -r "$f" ]; then
+    echo "backend/$f precisa pertencer ao usuario $USER e ser legivel por ele (hoje: $(stat -c '%U:%G %a' "$f"))." >&2
+    echo "Corrija na VPS: sudo chown $USER:$USER $APP_BASE_DIR/backend/$f && chmod 600 $APP_BASE_DIR/backend/$f" >&2
+    exit 1
+  fi
+  chmod 600 "$f"
+done
 mkdir -p "$APP_BASE_DIR/tmp" "$APP_BASE_DIR/data/raw"
 
 echo "==> dependencias (lock com hashes)"
-if [ ! -x .venv/bin/python ]; then
+# venv incompleta (ex.: criada sem o pacote python3-venv, sem pip) é recriada
+if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
   rm -rf .venv
-  "$PY" -m venv .venv || { echo "falha ao criar a venv: instale o pacote python3-venv (sudo apt install python3.12-venv)" >&2; exit 1; }
+  "$PY" -m venv .venv >/dev/null 2>&1 || true
+  if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    rm -rf .venv
+    echo "nao foi possivel criar a venv com pip: falta o modulo venv/ensurepip do Ubuntu." >&2
+    echo "Corrija na VPS: sudo apt install -y python3.12-venv   (e rode o deploy de novo)" >&2
+    exit 1
+  fi
 fi
-.venv/bin/pip install --quiet --disable-pip-version-check --no-input \
+.venv/bin/python -m pip install --quiet --disable-pip-version-check --no-input \
   --require-hashes --only-binary=:all: -r requirements.lock.txt
 
 echo "==> migrations"

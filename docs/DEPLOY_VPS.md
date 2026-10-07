@@ -37,9 +37,11 @@ Faça os passos 1 a 5 **antes** do primeiro push. O deploy aborta se não encont
 
 ## 1. Pré-requisitos na VPS (uma vez)
 
-O Python da VPS já atende: `python3 --version` → 3.12.3, e o backend exige 3.12 ou mais. O deploy cria a `.venv` sozinho.
-- Se o 1º deploy falhar com "falha ao criar a venv", instale o módulo de venv do Ubuntu: `sudo apt install -y python3.12-venv`.
-- O teste rápido é `python3 -m venv /tmp/t && rm -rf /tmp/t`.
+O Python da VPS já atende: `python3 --version` → 3.12.3, e o backend exige 3.12 ou mais. O Ubuntu, porém, **não traz o módulo de venv/pip** por padrão, e o deploy precisa dele para criar a `.venv`:
+
+```bash
+sudo apt install -y python3.12-venv
+```
 
 ```bash
 mkdir -p /srv/apps/w2data_w2health/staging/{frontend,backend,data/raw,tmp}
@@ -317,15 +319,37 @@ Nenhuma senha de banco vai para o GitHub: elas ficam só nos arquivos da seção
 
 ## 7. Carga inicial da demonstração (uma vez, após o 1º deploy)
 
+O seed sintético grava em massa com `COPY`, que o PostgreSQL não aceita em tabela com Row-Level Security forçada. Por isso, **só durante o seed**, o owner recebe `BYPASSRLS`. Isso não é necessário nos deploys, nas migrations nem no uso normal.
+
+**a) pgAdmin (superusuário):**
+
+```sql
+ALTER ROLE w2health_stg_owner BYPASSRLS;
+```
+
+**b) VPS:** substitua os valores entre `<>`, **sem** os sinais `<` e `>`, que no bash viram redirecionamento.
+
 ```bash
 cd /srv/apps/w2data_w2health/staging/backend
 set -a; . ./.env.migrate; set +a
 .venv/bin/python -m app.saas.cli bootstrap-demo          # planos + usuários demo (senhas exibidas UMA vez)
-.venv/bin/python -m app.saas.cli create-superadmin --email <email> --name "<nome>"   # MFA no 1º login
+.venv/bin/python -m app.saas.cli create-superadmin --email "seu.email@works2data.com.br" --name "Seu Nome"   # opcional; MFA no 1º login
 .venv/bin/python -m app.seed.run --beneficiarios 20000   # dados sintéticos do tenant demo
 .venv/bin/python -m app.seed.run --tenant w2h-demo-b --tenant-name "Operadora Horizonte" --seed 7   # opcional
+.venv/bin/python -m app.saas.cli bootstrap-demo          # de novo, só se semeou o w2h-demo-b: cria admin@horizonte e o plano dele
 exit   # ou feche o shell: não deixe DATABASE_ADMIN_URL exportada
 ```
+
+**c) pgAdmin: devolva a restrição.**
+
+```sql
+ALTER ROLE w2health_stg_owner NOBYPASSRLS;
+```
+
+**Observações:**
+- **Rodar de novo:** o seed apaga e regera os dados daquele tenant, então pode ser repetido.
+- **Superadmin:** o `bootstrap-demo` já cria o `superadmin@works2data.example`. O `create-superadmin` só serve para um superadmin com e-mail real.
+- **Execução repetida do `bootstrap-demo`:** é idempotente. Não recria contas existentes e só imprime as senhas das contas criadas naquela execução.
 
 ## 8. Verificação
 
